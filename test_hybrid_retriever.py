@@ -20,11 +20,15 @@ def main():
     )
     
     test_queries = [
-        # Semantic query - should use embedding search
-        "Elite attacking midfielder with creativity",
-        
-        # Aggregate query - should use baseline top scorers
-        "Who are the top goalscorers?",
+        # Diverse FPL manager queries
+        "Cheap defenders under 5 million with good clean sheet record",
+        "High scoring strikers with at least 15 goals",
+        "Creative midfielders with most assists",
+        "Consistent players with good form last 5 games",
+        "Differential captain options with high ceiling",
+        "Budget enablers under 4.5 million",
+        "Premium forwards worth the money",
+        "Set piece specialists for corners and free kicks"
     ]
     
     try:
@@ -34,7 +38,7 @@ def main():
             print('=' * 100)
             
             # Retrieve unified context
-            context = retriever.retrieve(query, season="2021-22")
+            context = retriever.retrieve(query, season="2022-23")
             
             # Print BASELINE results
             print("\n" + "=" * 100)

@@ -74,21 +74,21 @@ class BaselineRetriever:
         
         Args:
             position: Player position (FWD, MID, DEF, GK)
-            season: Season (e.g., "2021-22")
+            season: Season (e.g., "2021-22", "2022-23")
             limit: Maximum number of results
             
         Returns:
             List of top scorers with stats
         """
         query = """
-        MATCH (p:Player)-[r:PLAYED_IN]->(f:Fixture)
-        WHERE r.position = $position 
-          AND f.season = $season
+        MATCH (p:Player)-[played:PLAYED_IN]->(f:Fixture)<-[:HAS_FIXTURE]-(gw:Gameweek)
+        WHERE played.position = $position 
+          AND gw.season = $season
         WITH p.player_name AS player, 
-             r.position AS position,
-             SUM(r.goals_scored) AS total_goals,
-             SUM(r.assists) AS total_assists,
-             SUM(r.total_points) AS total_points
+             played.position AS position,
+             SUM(played.goals_scored) AS total_goals,
+             SUM(played.assists) AS total_assists,
+             SUM(played.total_points) AS total_points
         ORDER BY total_goals DESC
         LIMIT $limit
         RETURN player, position, total_goals, total_assists, total_points
@@ -110,27 +110,27 @@ class BaselineRetriever:
         
         Args:
             player_name: Player name or partial name
-            season: Season (e.g., "2021-22")
+            season: Season (e.g., "2021-22", "2022-23")
             
         Returns:
             Player's complete season statistics
         """
         query = """
-        MATCH (p:Player)-[r:PLAYED_IN]->(f:Fixture)
+        MATCH (p:Player)-[played:PLAYED_IN]->(f:Fixture)<-[:HAS_FIXTURE]-(gw:Gameweek)
         WHERE p.player_name CONTAINS $player_name 
-          AND f.season = $season
+          AND gw.season = $season
         RETURN p.player_name AS player,
-               f.season AS season,
+               gw.season AS season,
                COUNT(f) AS games_played,
-               SUM(r.minutes) AS total_minutes,
-               SUM(r.goals_scored) AS goals,
-               SUM(r.assists) AS assists,
-               SUM(r.total_points) AS total_points,
-               SUM(r.bonus) AS bonus_points,
-               SUM(r.clean_sheets) AS clean_sheets,
-               SUM(r.yellow_cards) AS yellow_cards,
-               SUM(r.red_cards) AS red_cards,
-               AVG(r.ict_index) AS avg_ict_index
+               SUM(played.minutes) AS total_minutes,
+               SUM(played.goals_scored) AS goals,
+               SUM(played.assists) AS assists,
+               SUM(played.total_points) AS total_points,
+               SUM(played.bonus) AS bonus_points,
+               SUM(played.clean_sheets) AS clean_sheets,
+               SUM(played.yellow_cards) AS yellow_cards,
+               SUM(played.red_cards) AS red_cards,
+               AVG(played.ict_index) AS avg_ict_index
         """
         
         return self._execute_query(query, {
@@ -148,29 +148,19 @@ class BaselineRetriever:
         
         Args:
             team_name: Team name
-            season: Season (e.g., "2021-22")
+            season: Season (e.g., "2021-22", "2022-23")
             
         Returns:
             List of players with their stats
         """
         query = """
-        MATCH (t:Team)<-[:HAS_HOME_TEAM]-(f:Fixture)<-[r:PLAYED_IN]-(p:Player)
+        MATCH (p:Player)-[:PLAYS_FOR]->(t:Team)
+        MATCH (p)-[played:PLAYED_IN]->(f:Fixture)<-[:HAS_FIXTURE]-(gw:Gameweek)
         WHERE t.name = $team_name 
-          AND f.season = $season
-        WITH DISTINCT p.player_name AS player, 
-             r.position AS position,
-             SUM(r.total_points) AS total_points
-        RETURN player, position, total_points
-        ORDER BY total_points DESC
-        
-        UNION
-        
-        MATCH (t:Team)<-[:HAS_AWAY_TEAM]-(f:Fixture)<-[r:PLAYED_IN]-(p:Player)
-        WHERE t.name = $team_name 
-          AND f.season = $season
-        WITH DISTINCT p.player_name AS player, 
-             r.position AS position,
-             SUM(r.total_points) AS total_points
+          AND gw.season = $season
+        WITH p.player_name AS player, 
+             played.position AS position,
+             SUM(played.total_points) AS total_points
         RETURN player, position, total_points
         ORDER BY total_points DESC
         """
@@ -190,25 +180,24 @@ class BaselineRetriever:
         
         Args:
             gameweek: Gameweek number
-            season: Season (e.g., "2021-22")
+            season: Season (e.g., "2021-22", "2022-23")
             limit: Maximum number of results
             
         Returns:
             List of top performers in the gameweek
         """
         query = """
-        MATCH (s:Season)-[:HAS_GW]->(gw:Gameweek)-[:HAS_FIXTURE]->(f:Fixture)
-        MATCH (p:Player)-[r:PLAYED_IN]->(f)
+        MATCH (p:Player)-[played:PLAYED_IN]->(f:Fixture)<-[:HAS_FIXTURE]-(gw:Gameweek)
         WHERE gw.GW_number = $gameweek 
-          AND s.season_name = $season
+          AND gw.season = $season
         RETURN p.player_name AS player,
-               r.position AS position,
-               r.total_points AS points,
-               r.goals_scored AS goals,
-               r.assists AS assists,
-               r.bonus AS bonus,
-               r.minutes AS minutes
-        ORDER BY r.total_points DESC
+               played.position AS position,
+               played.total_points AS points,
+               played.goals_scored AS goals,
+               played.assists AS assists,
+               played.bonus AS bonus,
+               played.minutes AS minutes
+        ORDER BY played.total_points DESC
         LIMIT $limit
         """
         
@@ -229,22 +218,22 @@ class BaselineRetriever:
         Args:
             player1: First player name
             player2: Second player name
-            season: Season (e.g., "2021-22")
+            season: Season (e.g., "2021-22", "2022-23")
             
         Returns:
             Comparison statistics for both players
         """
         query = """
-        MATCH (p:Player)-[r:PLAYED_IN]->(f:Fixture)
+        MATCH (p:Player)-[played:PLAYED_IN]->(f:Fixture)<-[:HAS_FIXTURE]-(gw:Gameweek)
         WHERE (p.player_name CONTAINS $player1 OR p.player_name CONTAINS $player2)
-          AND f.season = $season
+          AND gw.season = $season
         WITH p.player_name AS player,
-             SUM(r.goals_scored) AS goals,
-             SUM(r.assists) AS assists,
-             SUM(r.total_points) AS total_points,
-             SUM(r.minutes) AS minutes,
-             AVG(r.ict_index) AS avg_ict,
-             COUNT(f) AS games_played
+             SUM(played.goals_scored) AS goals,
+             SUM(played.assists) AS assists,
+             SUM(played.total_points) AS total_points,
+             SUM(played.minutes) AS minutes,
+             AVG(played.ict_index) AS avg_ict,
+             COUNT(gw) AS games_played
         RETURN player, goals, assists, total_points, minutes, avg_ict, games_played
         ORDER BY total_points DESC
         """
@@ -265,19 +254,19 @@ class BaselineRetriever:
         
         Args:
             min_goals: Minimum number of goals
-            season: Season (e.g., "2021-22")
+            season: Season (e.g., "2021-22", "2022-23")
             
         Returns:
             List of high-performing players
         """
         query = """
-        MATCH (p:Player)-[r:PLAYED_IN]->(f:Fixture)
-        WHERE f.season = $season
+        MATCH (p:Player)-[played:PLAYED_IN]->(f:Fixture)<-[:HAS_FIXTURE]-(gw:Gameweek)
+        WHERE gw.season = $season
         WITH p.player_name AS player,
-             r.position AS position,
-             SUM(r.goals_scored) AS total_goals,
-             SUM(r.assists) AS total_assists,
-             SUM(r.total_points) AS total_points
+             played.position AS position,
+             SUM(played.goals_scored) AS total_goals,
+             SUM(played.assists) AS total_assists,
+             SUM(played.total_points) AS total_points
         WHERE total_goals >= $min_goals
         RETURN player, position, total_goals, total_assists, total_points
         ORDER BY total_goals DESC
@@ -298,21 +287,21 @@ class BaselineRetriever:
         
         Args:
             position: Player position (FWD, MID, DEF, GK)
-            season: Season (e.g., "2021-22")
+            season: Season (e.g., "2021-22", "2022-23")
             limit: Maximum number of results
             
         Returns:
             List of top assisters
         """
         query = """
-        MATCH (p:Player)-[r:PLAYED_IN]->(f:Fixture)
-        WHERE r.position = $position 
-          AND f.season = $season
+        MATCH (p:Player)-[played:PLAYED_IN]->(f:Fixture)<-[:HAS_FIXTURE]-(gw:Gameweek)
+        WHERE played.position = $position 
+          AND gw.season = $season
         WITH p.player_name AS player,
-             r.position AS position,
-             SUM(r.assists) AS total_assists,
-             SUM(r.goals_scored) AS total_goals,
-             SUM(r.total_points) AS total_points
+             played.position AS position,
+             SUM(played.assists) AS total_assists,
+             SUM(played.goals_scored) AS total_goals,
+             SUM(played.total_points) AS total_points
         ORDER BY total_assists DESC
         LIMIT $limit
         RETURN player, position, total_assists, total_goals, total_points
@@ -334,22 +323,22 @@ class BaselineRetriever:
         
         Args:
             player_name: Player name or partial name
-            season: Season (e.g., "2021-22")
+            season: Season (e.g., "2021-22", "2022-23")
             last_n_gw: Number of recent gameweeks to analyze
             
         Returns:
             Player's recent form statistics
         """
         query = """
-        MATCH (p:Player)-[r:PLAYED_IN]->(f:Fixture)<-[:HAS_FIXTURE]-(gw:Gameweek)
+        MATCH (p:Player)-[played:PLAYED_IN]->(f:Fixture)<-[:HAS_FIXTURE]-(gw:Gameweek)
         WHERE p.player_name CONTAINS $player_name 
-          AND f.season = $season
+          AND gw.season = $season
         WITH p.player_name AS player,
              gw.GW_number AS gameweek,
-             r.total_points AS points,
-             r.goals_scored AS goals,
-             r.assists AS assists,
-             r.minutes AS minutes
+             played.total_points AS points,
+             played.goals_scored AS goals,
+             played.assists AS assists,
+             played.minutes AS minutes
         ORDER BY gameweek DESC
         LIMIT $last_n_gw
         RETURN player, gameweek, points, goals, assists, minutes
@@ -372,24 +361,24 @@ class BaselineRetriever:
         
         Args:
             position: Player position (FWD, MID, DEF, GK)
-            season: Season (e.g., "2021-22")
+            season: Season (e.g., "2021-22", "2022-23")
             limit: Maximum number of results
             
         Returns:
             List of top ICT performers
         """
         query = """
-        MATCH (p:Player)-[r:PLAYED_IN]->(f:Fixture)
-        WHERE r.position = $position 
-          AND f.season = $season
-          AND r.minutes > 0
+        MATCH (p:Player)-[played:PLAYED_IN]->(f:Fixture)<-[:HAS_FIXTURE]-(gw:Gameweek)
+        WHERE played.position = $position 
+          AND gw.season = $season
+          AND played.minutes > 0
         WITH p.player_name AS player,
-             r.position AS position,
-             AVG(r.ict_index) AS avg_ict_index,
-             AVG(r.influence) AS avg_influence,
-             AVG(r.creativity) AS avg_creativity,
-             AVG(r.threat) AS avg_threat,
-             SUM(r.total_points) AS total_points
+             played.position AS position,
+             AVG(played.ict_index) AS avg_ict_index,
+             AVG(played.influence) AS avg_influence,
+             AVG(played.creativity) AS avg_creativity,
+             AVG(played.threat) AS avg_threat,
+             SUM(played.total_points) AS total_points
         ORDER BY avg_ict_index DESC
         LIMIT $limit
         RETURN player, position, 

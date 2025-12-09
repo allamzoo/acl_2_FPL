@@ -122,7 +122,7 @@ class EmbeddingRetriever:
         query_embedding = self.model.encode(query, convert_to_numpy=True)
         
         cypher_query = f"""
-        MATCH (p:Player)-[r:PLAYED_IN]->(f:Fixture)
+        MATCH (p:Player)-[r:PLAYED_IN]->(f:Fixture)<-[:HAS_FIXTURE]-(gw:Gameweek)
         WHERE p.{self.embedding_property} IS NOT NULL
         WITH p, SUM(r.minutes) as total_minutes
         WHERE total_minutes >= $min_minutes
@@ -240,7 +240,7 @@ class EmbeddingRetriever:
         
         # Retrieve players with hybrid embeddings
         cypher_query = """
-        MATCH (p:Player)-[r:PLAYED_IN]->(f:Fixture)
+        MATCH (p:Player)-[r:PLAYED_IN]->(f:Fixture)<-[:HAS_FIXTURE]-(gw:Gameweek)
         WHERE p.numerical_features IS NOT NULL AND p.text_embedding IS NOT NULL
         """
         
@@ -322,8 +322,8 @@ class EmbeddingRetriever:
             List of player detail dictionaries
         """
         query = """
-        MATCH (p:Player)-[r:PLAYED_IN]->(f:Fixture)
-        WHERE p.player_name IN $player_names AND f.season = $season
+        MATCH (p:Player)-[r:PLAYED_IN]->(f:Fixture)<-[:HAS_FIXTURE]-(gw:Gameweek)
+        WHERE p.player_name IN $player_names AND gw.season = $season
         WITH p.player_name AS player_name,
              r.position AS position,
              SUM(r.goals_scored) AS total_goals,
@@ -331,7 +331,7 @@ class EmbeddingRetriever:
              SUM(r.total_points) AS total_points,
              SUM(r.bonus) AS bonus_points,
              SUM(r.clean_sheets) AS clean_sheets,
-             COUNT(f) AS games_played,
+             COUNT(gw) AS games_played,
              SUM(r.minutes) AS total_minutes,
              AVG(r.ict_index) AS avg_ict_index
         RETURN player_name, position, total_goals, total_assists, 

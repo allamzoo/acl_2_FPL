@@ -275,11 +275,20 @@ class HybridRetriever:
     def _merge_results(self, context: Dict) -> List[Dict[str, Any]]:
         """
         Merge baseline and semantic results into unified player list.
-        Deduplicates and combines information.
+        
+        Implementation:
+        1. Combines nodes/data from both retrieval methods
+        2. Removes duplicates by player_name (uses dictionary)
+        3. Ranks by similarity score (semantic relevance)
+        4. Tags source: 'baseline', 'semantic', or 'hybrid'
+        
+        Returns:
+            Sorted, deduplicated list of players with merged data
         """
+        # Step 1: COMBINE - Use dictionary to track all players
         player_map = {}  # player_name -> merged data
         
-        # Add semantic results first (they have similarity scores)
+        # Add semantic results first (they have similarity scores and detailed stats)
         if context['semantic_results'].get('players'):
             for player in context['semantic_results']['players']:
                 name = player['player_name']
@@ -287,29 +296,29 @@ class HybridRetriever:
                     'player_name': name,
                     'source': 'semantic',
                     'similarity_score': player.get('similarity_score', 0.0),
-                    **player
+                    **player  # Include all stats: goals, assists, points, position, etc.
                 }
         
-        # Merge in baseline results
+        # Step 2: MERGE - Add baseline results and combine with semantic
         for key, value in context['baseline_results'].items():
             if isinstance(value, list):
                 for item in value:
                     name = item.get('player') or item.get('player_name') or item.get('name')
                     if name:
                         if name in player_map:
-                            # Merge data
+                            # DUPLICATE FOUND - Merge data and mark as hybrid
                             player_map[name].update(item)
                             player_map[name]['source'] = 'hybrid'
                         else:
-                            # Add new player from baseline
+                            # New player from baseline only
                             player_map[name] = {
                                 'player_name': name,
                                 'source': 'baseline',
-                                'similarity_score': 0.0,
+                                'similarity_score': 0.0,  # No semantic match
                                 **item
                             }
         
-        # Convert to sorted list (by similarity score)
+        # Step 3: RANK/PRIORITIZE - Sort by similarity score (highest first)
         unified = list(player_map.values())
         unified.sort(key=lambda x: x.get('similarity_score', 0), reverse=True)
         
