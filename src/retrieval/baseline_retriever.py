@@ -2,10 +2,460 @@
 Baseline Retrieval Module
 
 Implements deterministic Cypher-based retrieval from Neo4j.
+Uses predefined Cypher queries to retrieve structured information from the KG.
 """
 
-# TODO: Initialize Neo4j driver connection
-# TODO: Implement query execution function
-# TODO: Parse and format query results
-# TODO: Handle query errors and edge cases
-# TODO: Implement result ranking/filtering
+from neo4j import GraphDatabase
+from typing import List, Dict, Any, Optional
+from config.config import NEO4J_URI, NEO4J_USERNAME, NEO4J_PASSWORD, NEO4J_DATABASE
+import logging
+
+logger = logging.getLogger(__name__)
+
+
+class BaselineRetriever:
+    """
+    Baseline retriever using Cypher queries for deterministic KG retrieval.
+    """
+    
+    def __init__(self):
+        """Initialize Neo4j connection."""
+        self.driver = GraphDatabase.driver(
+            NEO4J_URI,
+            auth=(NEO4J_USERNAME, NEO4J_PASSWORD)
+        )
+        logger.info("Baseline retriever initialized")
+    
+    def close(self):
+        """Close Neo4j driver connection."""
+        if self.driver:
+            self.driver.close()
+            logger.info("Neo4j connection closed")
+    
+    def __enter__(self):
+        """Context manager entry."""
+        return self
+    
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """Context manager exit."""
+        self.close()
+    
+    # =========================================================================
+    # Query 1: Find Player by Name
+    # =========================================================================
+    
+    def find_player_by_name(self, player_name: str) -> List[Dict[str, Any]]:
+        """
+        Search for players by name.
+        
+        Args:
+            player_name: Player name or partial name to search
+            
+        Returns:
+            List of player records with name and ID
+        """
+        query = """
+        MATCH (p:Player)
+        WHERE p.player_name CONTAINS $player_name
+        RETURN p.player_name AS name, 
+               p.player_element AS id
+        LIMIT 10
+        """
+        
+        return self._execute_query(query, {"player_name": player_name})
+    
+    # =========================================================================
+    # Query 2: Top Scorers by Position
+    # =========================================================================
+    
+    def get_top_scorers(self, position: str, season: str, limit: int = 10) -> List[Dict[str, Any]]:
+        """
+        Get top goal scorers for a specific position in a season.
+        
+        Args:
+            position: Player position (FWD, MID, DEF, GK)
+            season: Season (e.g., "2021-22")
+            limit: Maximum number of results
+            
+        Returns:
+            List of top scorers with stats
+        """
+        query = """
+        MATCH (p:Player)-[r:PLAYED_IN]->(f:Fixture)
+        WHERE r.position = $position 
+          AND f.season = $season
+        WITH p.player_name AS player, 
+             r.position AS position,
+             SUM(r.goals_scored) AS total_goals,
+             SUM(r.assists) AS total_assists,
+             SUM(r.total_points) AS total_points
+        ORDER BY total_goals DESC
+        LIMIT $limit
+        RETURN player, position, total_goals, total_assists, total_points
+        """
+        
+        return self._execute_query(query, {
+            "position": position,
+            "season": season,
+            "limit": limit
+        })
+    
+    # =========================================================================
+    # Query 3: Player Season Statistics
+    # =========================================================================
+    
+    def get_player_season_stats(self, player_name: str, season: str) -> List[Dict[str, Any]]:
+        """
+        Get comprehensive statistics for a player in a specific season.
+        
+        Args:
+            player_name: Player name or partial name
+            season: Season (e.g., "2021-22")
+            
+        Returns:
+            Player's complete season statistics
+        """
+        query = """
+        MATCH (p:Player)-[r:PLAYED_IN]->(f:Fixture)
+        WHERE p.player_name CONTAINS $player_name 
+          AND f.season = $season
+        RETURN p.player_name AS player,
+               f.season AS season,
+               COUNT(f) AS games_played,
+               SUM(r.minutes) AS total_minutes,
+               SUM(r.goals_scored) AS goals,
+               SUM(r.assists) AS assists,
+               SUM(r.total_points) AS total_points,
+               SUM(r.bonus) AS bonus_points,
+               SUM(r.clean_sheets) AS clean_sheets,
+               SUM(r.yellow_cards) AS yellow_cards,
+               SUM(r.red_cards) AS red_cards,
+               AVG(r.ict_index) AS avg_ict_index
+        """
+        
+        return self._execute_query(query, {
+            "player_name": player_name,
+            "season": season
+        })
+    
+    # =========================================================================
+    # Query 4: Players by Team
+    # =========================================================================
+    
+    def get_team_players(self, team_name: str, season: str) -> List[Dict[str, Any]]:
+        """
+        Get all players who played for a specific team.
+        
+        Args:
+            team_name: Team name
+            season: Season (e.g., "2021-22")
+            
+        Returns:
+            List of players with their stats
+        """
+        query = """
+        MATCH (t:Team)<-[:HAS_HOME_TEAM]-(f:Fixture)<-[r:PLAYED_IN]-(p:Player)
+        WHERE t.name = $team_name 
+          AND f.season = $season
+        WITH DISTINCT p.player_name AS player, 
+             r.position AS position,
+             SUM(r.total_points) AS total_points
+        RETURN player, position, total_points
+        ORDER BY total_points DESC
+        
+        UNION
+        
+        MATCH (t:Team)<-[:HAS_AWAY_TEAM]-(f:Fixture)<-[r:PLAYED_IN]-(p:Player)
+        WHERE t.name = $team_name 
+          AND f.season = $season
+        WITH DISTINCT p.player_name AS player, 
+             r.position AS position,
+             SUM(r.total_points) AS total_points
+        RETURN player, position, total_points
+        ORDER BY total_points DESC
+        """
+        
+        return self._execute_query(query, {
+            "team_name": team_name,
+            "season": season
+        })
+    
+    # =========================================================================
+    # Query 5: Gameweek Top Performers
+    # =========================================================================
+    
+    def get_gameweek_top_performers(self, gameweek: int, season: str, limit: int = 10) -> List[Dict[str, Any]]:
+        """
+        Find top performers in a specific gameweek.
+        
+        Args:
+            gameweek: Gameweek number
+            season: Season (e.g., "2021-22")
+            limit: Maximum number of results
+            
+        Returns:
+            List of top performers in the gameweek
+        """
+        query = """
+        MATCH (s:Season)-[:HAS_GW]->(gw:Gameweek)-[:HAS_FIXTURE]->(f:Fixture)
+        MATCH (p:Player)-[r:PLAYED_IN]->(f)
+        WHERE gw.GW_number = $gameweek 
+          AND s.season_name = $season
+        RETURN p.player_name AS player,
+               r.position AS position,
+               r.total_points AS points,
+               r.goals_scored AS goals,
+               r.assists AS assists,
+               r.bonus AS bonus,
+               r.minutes AS minutes
+        ORDER BY r.total_points DESC
+        LIMIT $limit
+        """
+        
+        return self._execute_query(query, {
+            "gameweek": gameweek,
+            "season": season,
+            "limit": limit
+        })
+    
+    # =========================================================================
+    # Query 6: Compare Two Players
+    # =========================================================================
+    
+    def compare_players(self, player1: str, player2: str, season: str) -> List[Dict[str, Any]]:
+        """
+        Compare statistics between two players in a season.
+        
+        Args:
+            player1: First player name
+            player2: Second player name
+            season: Season (e.g., "2021-22")
+            
+        Returns:
+            Comparison statistics for both players
+        """
+        query = """
+        MATCH (p:Player)-[r:PLAYED_IN]->(f:Fixture)
+        WHERE (p.player_name CONTAINS $player1 OR p.player_name CONTAINS $player2)
+          AND f.season = $season
+        WITH p.player_name AS player,
+             SUM(r.goals_scored) AS goals,
+             SUM(r.assists) AS assists,
+             SUM(r.total_points) AS total_points,
+             SUM(r.minutes) AS minutes,
+             AVG(r.ict_index) AS avg_ict,
+             COUNT(f) AS games_played
+        RETURN player, goals, assists, total_points, minutes, avg_ict, games_played
+        ORDER BY total_points DESC
+        """
+        
+        return self._execute_query(query, {
+            "player1": player1,
+            "player2": player2,
+            "season": season
+        })
+    
+    # =========================================================================
+    # Query 7: High Performers by Threshold
+    # =========================================================================
+    
+    def get_high_performers(self, min_goals: int, season: str) -> List[Dict[str, Any]]:
+        """
+        Find players exceeding specific performance thresholds.
+        
+        Args:
+            min_goals: Minimum number of goals
+            season: Season (e.g., "2021-22")
+            
+        Returns:
+            List of high-performing players
+        """
+        query = """
+        MATCH (p:Player)-[r:PLAYED_IN]->(f:Fixture)
+        WHERE f.season = $season
+        WITH p.player_name AS player,
+             r.position AS position,
+             SUM(r.goals_scored) AS total_goals,
+             SUM(r.assists) AS total_assists,
+             SUM(r.total_points) AS total_points
+        WHERE total_goals >= $min_goals
+        RETURN player, position, total_goals, total_assists, total_points
+        ORDER BY total_goals DESC
+        """
+        
+        return self._execute_query(query, {
+            "min_goals": min_goals,
+            "season": season
+        })
+    
+    # =========================================================================
+    # Query 8: Best Assisters by Position
+    # =========================================================================
+    
+    def get_top_assisters(self, position: str, season: str, limit: int = 10) -> List[Dict[str, Any]]:
+        """
+        Get top assist providers for a specific position.
+        
+        Args:
+            position: Player position (FWD, MID, DEF, GK)
+            season: Season (e.g., "2021-22")
+            limit: Maximum number of results
+            
+        Returns:
+            List of top assisters
+        """
+        query = """
+        MATCH (p:Player)-[r:PLAYED_IN]->(f:Fixture)
+        WHERE r.position = $position 
+          AND f.season = $season
+        WITH p.player_name AS player,
+             r.position AS position,
+             SUM(r.assists) AS total_assists,
+             SUM(r.goals_scored) AS total_goals,
+             SUM(r.total_points) AS total_points
+        ORDER BY total_assists DESC
+        LIMIT $limit
+        RETURN player, position, total_assists, total_goals, total_points
+        """
+        
+        return self._execute_query(query, {
+            "position": position,
+            "season": season,
+            "limit": limit
+        })
+    
+    # =========================================================================
+    # Query 9: Player Form (Recent Gameweeks)
+    # =========================================================================
+    
+    def get_player_form(self, player_name: str, season: str, last_n_gw: int = 5) -> List[Dict[str, Any]]:
+        """
+        Analyze player performance over recent gameweeks.
+        
+        Args:
+            player_name: Player name or partial name
+            season: Season (e.g., "2021-22")
+            last_n_gw: Number of recent gameweeks to analyze
+            
+        Returns:
+            Player's recent form statistics
+        """
+        query = """
+        MATCH (p:Player)-[r:PLAYED_IN]->(f:Fixture)<-[:HAS_FIXTURE]-(gw:Gameweek)
+        WHERE p.player_name CONTAINS $player_name 
+          AND f.season = $season
+        WITH p.player_name AS player,
+             gw.GW_number AS gameweek,
+             r.total_points AS points,
+             r.goals_scored AS goals,
+             r.assists AS assists,
+             r.minutes AS minutes
+        ORDER BY gameweek DESC
+        LIMIT $last_n_gw
+        RETURN player, gameweek, points, goals, assists, minutes
+        ORDER BY gameweek ASC
+        """
+        
+        return self._execute_query(query, {
+            "player_name": player_name,
+            "season": season,
+            "last_n_gw": last_n_gw
+        })
+    
+    # =========================================================================
+    # Query 10: Best Players by ICT Index
+    # =========================================================================
+    
+    def get_top_ict_players(self, position: str, season: str, limit: int = 10) -> List[Dict[str, Any]]:
+        """
+        Find players with highest ICT (Influence, Creativity, Threat) index.
+        
+        Args:
+            position: Player position (FWD, MID, DEF, GK)
+            season: Season (e.g., "2021-22")
+            limit: Maximum number of results
+            
+        Returns:
+            List of top ICT performers
+        """
+        query = """
+        MATCH (p:Player)-[r:PLAYED_IN]->(f:Fixture)
+        WHERE r.position = $position 
+          AND f.season = $season
+          AND r.minutes > 0
+        WITH p.player_name AS player,
+             r.position AS position,
+             AVG(r.ict_index) AS avg_ict_index,
+             AVG(r.influence) AS avg_influence,
+             AVG(r.creativity) AS avg_creativity,
+             AVG(r.threat) AS avg_threat,
+             SUM(r.total_points) AS total_points
+        ORDER BY avg_ict_index DESC
+        LIMIT $limit
+        RETURN player, position, 
+               ROUND(avg_ict_index * 10) / 10 AS avg_ict,
+               ROUND(avg_influence * 10) / 10 AS avg_influence,
+               ROUND(avg_creativity * 10) / 10 AS avg_creativity,
+               ROUND(avg_threat * 10) / 10 AS avg_threat,
+               total_points
+        """
+        
+        return self._execute_query(query, {
+            "position": position,
+            "season": season,
+            "limit": limit
+        })
+    
+    # =========================================================================
+    # Helper Methods
+    # =========================================================================
+    
+    def _execute_query(self, query: str, parameters: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """
+        Execute a Cypher query and return results.
+        
+        Args:
+            query: Cypher query string
+            parameters: Query parameters
+            
+        Returns:
+            List of result records as dictionaries
+        """
+        try:
+            with self.driver.session(database=NEO4J_DATABASE) as session:
+                result = session.run(query, parameters)
+                records = [dict(record) for record in result]
+                logger.info(f"Query executed successfully. Retrieved {len(records)} records.")
+                return records
+        except Exception as e:
+            logger.error(f"Query execution failed: {str(e)}")
+            logger.error(f"Query: {query}")
+            logger.error(f"Parameters: {parameters}")
+            return []
+    
+    def format_results_for_llm(self, results: List[Dict[str, Any]], query_type: str) -> str:
+        """
+        Format query results into a readable string for LLM context.
+        
+        Args:
+            results: Query results
+            query_type: Type of query executed
+            
+        Returns:
+            Formatted string representation of results
+        """
+        if not results:
+            return f"No results found for {query_type} query."
+        
+        formatted = f"=== {query_type.upper()} RESULTS ===\n\n"
+        
+        for i, record in enumerate(results, 1):
+            formatted += f"{i}. "
+            for key, value in record.items():
+                if isinstance(value, float):
+                    formatted += f"{key}: {value:.2f}, "
+                else:
+                    formatted += f"{key}: {value}, "
+            formatted = formatted.rstrip(", ") + "\n"
+        
+        return formatted
