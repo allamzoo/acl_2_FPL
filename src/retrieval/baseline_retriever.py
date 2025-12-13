@@ -68,37 +68,50 @@ class BaselineRetriever:
     # Query 2: Top Scorers by Position
     # =========================================================================
     
-    def get_top_scorers(self, position: str, season: str, limit: int = 10) -> List[Dict[str, Any]]:
+    def get_top_scorers(self, position: Optional[str] = None, season: str = "2022-23", limit: int = 10) -> List[Dict[str, Any]]:
         """
         Get top goal scorers for a specific position in a season.
         
         Args:
-            position: Player position (FWD, MID, DEF, GK)
+            position: Player position (FWD, MID, DEF, GK) or None for all positions
             season: Season (e.g., "2021-22", "2022-23")
             limit: Maximum number of results
             
         Returns:
             List of top scorers with stats
         """
-        query = """
-        MATCH (p:Player)-[played:PLAYED_IN]->(f:Fixture)<-[:HAS_FIXTURE]-(gw:Gameweek)
-        WHERE played.position = $position 
-          AND gw.season = $season
-        WITH p.player_name AS player, 
-             played.position AS position,
-             SUM(played.goals_scored) AS total_goals,
-             SUM(played.assists) AS total_assists,
-             SUM(played.total_points) AS total_points
-        ORDER BY total_goals DESC
-        LIMIT $limit
-        RETURN player, position, total_goals, total_assists, total_points
-        """
+        # Build query conditionally based on whether position is specified
+        if position:
+            query = """
+            MATCH (p:Player)-[played:PLAYED_IN]->(f:Fixture)<-[:HAS_FIXTURE]-(gw:Gameweek)
+            WHERE played.position = $position 
+              AND gw.season = $season
+            WITH p.player_name AS player, 
+                 played.position AS position,
+                 SUM(played.goals_scored) AS total_goals,
+                 SUM(played.assists) AS total_assists,
+                 SUM(played.total_points) AS total_points
+            ORDER BY total_goals DESC
+            LIMIT $limit
+            RETURN player, position, total_goals, total_assists, total_points
+            """
+            params = {"position": position, "season": season, "limit": limit}
+        else:
+            query = """
+            MATCH (p:Player)-[played:PLAYED_IN]->(f:Fixture)<-[:HAS_FIXTURE]-(gw:Gameweek)
+            WHERE gw.season = $season
+            WITH p.player_name AS player, 
+                 played.position AS position,
+                 SUM(played.goals_scored) AS total_goals,
+                 SUM(played.assists) AS total_assists,
+                 SUM(played.total_points) AS total_points
+            ORDER BY total_goals DESC
+            LIMIT $limit
+            RETURN player, position, total_goals, total_assists, total_points
+            """
+            params = {"season": season, "limit": limit}
         
-        return self._execute_query(query, {
-            "position": position,
-            "season": season,
-            "limit": limit
-        })
+        return self._execute_query(query, params)
     
     # =========================================================================
     # Query 3: Player Season Statistics
@@ -281,37 +294,50 @@ class BaselineRetriever:
     # Query 8: Best Assisters by Position
     # =========================================================================
     
-    def get_top_assisters(self, position: str, season: str, limit: int = 10) -> List[Dict[str, Any]]:
+    def get_top_assisters(self, position: Optional[str] = None, season: str = "2022-23", limit: int = 10) -> List[Dict[str, Any]]:
         """
         Get top assist providers for a specific position.
         
         Args:
-            position: Player position (FWD, MID, DEF, GK)
+            position: Player position (FWD, MID, DEF, GK) or None for all positions
             season: Season (e.g., "2021-22", "2022-23")
             limit: Maximum number of results
             
         Returns:
             List of top assisters
         """
-        query = """
-        MATCH (p:Player)-[played:PLAYED_IN]->(f:Fixture)<-[:HAS_FIXTURE]-(gw:Gameweek)
-        WHERE played.position = $position 
-          AND gw.season = $season
-        WITH p.player_name AS player,
-             played.position AS position,
-             SUM(played.assists) AS total_assists,
-             SUM(played.goals_scored) AS total_goals,
-             SUM(played.total_points) AS total_points
-        ORDER BY total_assists DESC
-        LIMIT $limit
-        RETURN player, position, total_assists, total_goals, total_points
-        """
+        # Build query conditionally based on whether position is specified
+        if position:
+            query = """
+            MATCH (p:Player)-[played:PLAYED_IN]->(f:Fixture)<-[:HAS_FIXTURE]-(gw:Gameweek)
+            WHERE played.position = $position 
+              AND gw.season = $season
+            WITH p.player_name AS player,
+                 played.position AS position,
+                 SUM(played.assists) AS total_assists,
+                 SUM(played.goals_scored) AS total_goals,
+                 SUM(played.total_points) AS total_points
+            ORDER BY total_assists DESC
+            LIMIT $limit
+            RETURN player, position, total_assists, total_goals, total_points
+            """
+            params = {"position": position, "season": season, "limit": limit}
+        else:
+            query = """
+            MATCH (p:Player)-[played:PLAYED_IN]->(f:Fixture)<-[:HAS_FIXTURE]-(gw:Gameweek)
+            WHERE gw.season = $season
+            WITH p.player_name AS player,
+                 played.position AS position,
+                 SUM(played.assists) AS total_assists,
+                 SUM(played.goals_scored) AS total_goals,
+                 SUM(played.total_points) AS total_points
+            ORDER BY total_assists DESC
+            LIMIT $limit
+            RETURN player, position, total_assists, total_goals, total_points
+            """
+            params = {"season": season, "limit": limit}
         
-        return self._execute_query(query, {
-            "position": position,
-            "season": season,
-            "limit": limit
-        })
+        return self._execute_query(query, params)
     
     # =========================================================================
     # Query 9: Player Form (Recent Gameweeks)

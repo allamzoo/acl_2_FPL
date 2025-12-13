@@ -190,9 +190,28 @@ class SimpleIntentClassifier:
         Returns:
             Classification result
         """
-        query_lower = query.lower()
+        query_lower = query.lower().strip()
         
         # Simple keyword patterns (order matters - more specific first)
+        
+        # Quick check for common "top" queries
+        if "top" in query_lower:
+            # Check for scorers/goals
+            if any(x in query_lower for x in ["scorer", "goal", "attack", "forward", "striker"]) and not any(x in query_lower for x in ["assist"]):
+                return {
+                    "intent": Intent.TOP_SCORERS,
+                    "confidence": 0.95,
+                    "reasoning": "Top + scorer/goal keywords detected",
+                    "query": query
+                }
+            # Check for assisters
+            if any(x in query_lower for x in ["assist", "playmaker", "creator"]):
+                return {
+                    "intent": Intent.TOP_ASSISTERS,
+                    "confidence": 0.95,
+                    "reasoning": "Top + assist keywords detected",
+                    "query": query
+                }
         
         # PLAYER_COMPARISON (check before stats)
         if any(phrase in query_lower for phrase in ["compare", " vs ", " versus ", "difference between"]):
@@ -204,7 +223,13 @@ class SimpleIntentClassifier:
             }
         
         # TOP_SCORERS
-        if any(phrase in query_lower for phrase in ["top scorers", "most goals", "goal scorers", "best scorers", "leading scorers"]):
+        if any(phrase in query_lower for phrase in [
+            "topscorers", "top scorers", "top scorer", "topscorer",
+            "most goals", "goal scorers", "goalscorers", "goal scorer",
+            "best scorers", "leading scorers", "highest scorers",
+            "who scored", "top goal", "highest goal", "goals leader",
+            "who are the top", "top attackers", "best attackers"
+        ]):
             return {
                 "intent": Intent.TOP_SCORERS,
                 "confidence": 0.9,
