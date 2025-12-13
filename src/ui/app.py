@@ -52,13 +52,9 @@ def load_custom_css():
         .stApp {{
             background: linear-gradient(135deg, {FPL_COLORS['primary']} 0%, #580064 100%);
             font-family: 'Karla', sans-serif;
-            color: white;
         }}
         
-        /* Text colors for dark theme */
-        .stApp *, .stMarkdown, .stMarkdown p, .stMarkdown li, .stMarkdown span {{
-            color: white !important;
-        }}
+        /* Remove global white text override - let specific contexts control their colors */
         
         /* Animations */
         @keyframes fadeIn {{
@@ -144,7 +140,11 @@ def load_custom_css():
             color: {FPL_COLORS['primary']} !important;
         }}
         
-        .fpl-card p, .fpl-card span, .fpl-card li, .fpl-card div {{
+        .fpl-card p, .fpl-card span, .fpl-card li, .fpl-card div, .fpl-card {{
+            color: #2d2d2d !important;
+        }}
+        
+        .fpl-card *, .fpl-card .stMarkdown, .fpl-card .stMarkdown * {{
             color: #2d2d2d !important;
         }}
         
@@ -167,7 +167,11 @@ def load_custom_css():
             color: {FPL_COLORS['primary']} !important;
         }}
         
-        .player-card p, .player-card span {{
+        .player-card p, .player-card span, .player-card div, .player-card li {{
+            color: #2d2d2d !important;
+        }}
+        
+        .player-card *, .player-card .stMarkdown, .player-card .stMarkdown * {{
             color: #2d2d2d !important;
         }}
         
@@ -194,6 +198,12 @@ def load_custom_css():
         }}
         
         /* Query Input */
+        .stTextInput > label {{
+            color: white !important;
+            font-weight: 600;
+            font-size: 1rem;
+        }}
+        
         .stTextInput > div > div > input {{
             border: 2px solid {FPL_COLORS['border']};
             border-radius: 8px;
@@ -256,8 +266,21 @@ def load_custom_css():
             background-color: {FPL_COLORS['card']};
             border: 1px solid {FPL_COLORS['border']};
             border-radius: 8px;
-            color: #2d2d2d;
+            color: #2d2d2d !important;
             font-weight: 600;
+        }}
+        
+        .streamlit-expanderHeader * {{
+            color: #2d2d2d !important;
+        }}
+        
+        [data-testid="stExpander"] {{
+            background-color: {FPL_COLORS['card']};
+        }}
+        
+        [data-testid="stExpander"] .stMarkdown,
+        [data-testid="stExpander"] .stMarkdown * {{
+            color: #2d2d2d !important;
         }}
         
         /* Code blocks */
@@ -296,17 +319,27 @@ def load_custom_css():
         }}
         
         /* Main content area text */
-        div[data-testid="stVerticalBlock"] p,
-        div[data-testid="stVerticalBlock"] li,
-        div[data-testid="stVerticalBlock"] span {{
-            color: #2d2d2d;
+        /* Override: Elements directly on purple background should be white */
+        div[data-testid="stVerticalBlock"] > div > div > p,
+        div[data-testid="stVerticalBlock"] > div > div > h1,
+        div[data-testid="stVerticalBlock"] > div > div > h2,
+        div[data-testid="stVerticalBlock"] > div > div > h3,
+        div[data-testid="stVerticalBlock"] > div > div > label {{
+            color: white !important;
         }}
         
-        /* Headers in main content */
-        div[data-testid="stVerticalBlock"] h1,
-        div[data-testid="stVerticalBlock"] h2,
-        div[data-testid="stVerticalBlock"] h3 {{
-            color: {FPL_COLORS['primary']};
+        /* Text inside cards should be dark */
+        div[data-testid="stVerticalBlock"] .fpl-card p,
+        div[data-testid="stVerticalBlock"] .fpl-card li,
+        div[data-testid="stVerticalBlock"] .fpl-card span,
+        div[data-testid="stVerticalBlock"] .fpl-card div {{
+            color: #2d2d2d !important;
+        }}
+        
+        div[data-testid="stVerticalBlock"] .fpl-card h1,
+        div[data-testid="stVerticalBlock"] .fpl-card h2,
+        div[data-testid="stVerticalBlock"] .fpl-card h3 {{
+            color: {FPL_COLORS['primary']} !important;
         }}
         
         /* Loading spinner */
@@ -324,14 +357,135 @@ def load_custom_css():
             border-radius: 8px 8px 0 0;
             padding: 0.75rem 1.5rem;
             border: 1px solid {FPL_COLORS['border']};
-            color: #2d2d2d;
+            color: #2d2d2d !important;
             font-weight: 600;
+        }}
+        
+        .stTabs [data-baseweb="tab"] * {{
+            color: #2d2d2d !important;
         }}
         
         .stTabs [aria-selected="true"] {{
             background: linear-gradient(135deg, {FPL_COLORS['primary']} 0%, #580064 100%);
-            color: white;
+            color: white !important;
             border-color: {FPL_COLORS['primary']};
+        }}
+        
+        .stTabs [aria-selected="true"] * {{
+            color: white !important;
+        }}
+        
+        /* Tab content area */
+        .stTabs [data-baseweb="tab-panel"] {{
+            background-color: {FPL_COLORS['card']};
+            padding: 1.5rem;
+            border-radius: 0 0 12px 12px;
+        }}
+        
+        .stTabs [data-baseweb="tab-panel"] * {{
+            color: #2d2d2d !important;
+        }}
+        
+        .stTabs [data-baseweb="tab-panel"] h1,
+        .stTabs [data-baseweb="tab-panel"] h2,
+        .stTabs [data-baseweb="tab-panel"] h3 {{
+            color: {FPL_COLORS['primary']} !important;
+        }}
+        
+        /* Main container text colors - White on purple background by default */
+        .main .block-container {{
+            color: white;
+        }}
+        
+        .main .block-container *,
+        .main .block-container h1,
+        .main .block-container h2, 
+        .main .block-container h3,
+        .main .block-container h4,
+        .main .block-container h5,
+        .main .block-container p,
+        .main .block-container span,
+        .main .block-container label {{
+            color: white !important;
+        }}
+        
+        /* Override for white cards - make text dark */
+        .main .block-container .fpl-card,
+        .main .block-container .fpl-card * {{
+            color: #2d2d2d !important;
+        }}
+        
+        .main .block-container .fpl-card h1,
+        .main .block-container .fpl-card h2,
+        .main .block-container .fpl-card h3 {{
+            color: {FPL_COLORS['primary']} !important;
+        }}
+        
+        /* Player cards - dark text on white */
+        .main .block-container .player-card,
+        .main .block-container .player-card * {{
+            color: #2d2d2d !important;
+        }}
+        
+        .main .block-container .player-card h1,
+        .main .block-container .player-card h2,
+        .main .block-container .player-card h3 {{
+            color: {FPL_COLORS['primary']} !important;
+        }}
+        
+        /* JSON viewer text */
+        .stJson {{
+            background-color: #1e1e1e;
+            padding: 1rem;
+            border-radius: 8px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }}
+        
+        .stJson * {{
+            color: white !important;
+        }}
+        
+        .stJson .json-key {{
+            color: {FPL_COLORS['secondary']} !important;
+        }}
+        
+        .stJson .json-string {{
+            color: #ce9178 !important;
+        }}
+        
+        .stJson .json-number {{
+            color: #b5cea8 !important;
+        }}
+        
+        /* Info/Success/Warning boxes text */
+        .stSuccess *, .stInfo *, .stWarning * {{
+            color: #2d2d2d !important;
+        }}
+        
+        /* Metric labels and values */
+        [data-testid="stMetricLabel"] {{
+            color: white !important;
+        }}
+        
+        div[data-testid="stVerticalBlock"] [data-testid="stMetricLabel"] {{
+            color: #2d2d2d !important;
+        }}
+        
+        /* Ensure section headings on purple background are white */
+        .main h1, .main h2, .main h3 {{
+            color: white !important;
+        }}
+        
+        /* But keep headings in cards as purple */
+        .main .fpl-card h1, .main .fpl-card h2, .main .fpl-card h3 {{
+            color: {FPL_COLORS['primary']} !important;
+        }}
+        
+        /* Markdown headings on main background */
+        .main > div > div > div > .stMarkdown h1,
+        .main > div > div > div > .stMarkdown h2,
+        .main > div > div > div > .stMarkdown h3 {{
+            color: white !important;
         }}
     </style>
     """, unsafe_allow_html=True)
@@ -560,8 +714,6 @@ def process_query(query: str, config: dict):
                 
                 # Call method with appropriate parameters based on intent
                 try:
-                    from src.preprocessing.intent_classifier import Intent
-                    
                     if intent_result['intent'] == Intent.TOP_SCORERS:
                         position = None
                         if config.get('position_filter') and len(config['position_filter']) > 0:
