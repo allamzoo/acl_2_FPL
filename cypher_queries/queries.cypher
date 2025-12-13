@@ -23,9 +23,10 @@ LIMIT 10;
 // Example: position = "FWD", season = "2021-22", limit = 10
 // ==============================================================================
 
-MATCH (p:Player)-[r:PLAYED_IN]->(f:Fixture)
+MATCH (p:Player)-[r:PLAYED_IN]->(f:Fixture)<-[:HAS_FIXTURE]-(gw:Gameweek)
 WHERE r.position = $position 
-  AND f.season = $season
+  AND gw.season = $season
+  AND r.minutes > 0
 WITH p.player_name AS player, 
      r.position AS position,
      SUM(r.goals_scored) AS total_goals,
@@ -45,11 +46,11 @@ RETURN player, position, total_goals, total_assists, total_points;
 // Example: player_name = "Salah", season = "2021-22"
 // ==============================================================================
 
-MATCH (p:Player)-[r:PLAYED_IN]->(f:Fixture)
+MATCH (p:Player)-[r:PLAYED_IN]->(f:Fixture)<-[:HAS_FIXTURE]-(gw:Gameweek)
 WHERE p.player_name CONTAINS $player_name 
-  AND f.season = $season
+  AND gw.season = $season
 RETURN p.player_name AS player,
-       f.season AS season,
+       gw.season AS season,
        COUNT(f) AS games_played,
        SUM(r.minutes) AS total_minutes,
        SUM(r.goals_scored) AS goals,
@@ -71,9 +72,10 @@ RETURN p.player_name AS player,
 // Example: team_name = "Liverpool", season = "2021-22"
 // ==============================================================================
 
-MATCH (t:Team)<-[:HAS_HOME_TEAM]-(f:Fixture)<-[r:PLAYED_IN]-(p:Player)
+MATCH (t:Team)<-[:HAS_HOME_TEAM]-(f:Fixture)<-[:HAS_FIXTURE]-(gw:Gameweek)
+MATCH (p:Player)-[r:PLAYED_IN]->(f)
 WHERE t.name = $team_name 
-  AND f.season = $season
+  AND gw.season = $season
 WITH DISTINCT p.player_name AS player, 
      r.position AS position,
      SUM(r.total_points) AS total_points
@@ -82,9 +84,10 @@ ORDER BY total_points DESC
 
 UNION
 
-MATCH (t:Team)<-[:HAS_AWAY_TEAM]-(f:Fixture)<-[r:PLAYED_IN]-(p:Player)
+MATCH (t:Team)<-[:HAS_AWAY_TEAM]-(f:Fixture)<-[:HAS_FIXTURE]-(gw:Gameweek)
+MATCH (p:Player)-[r:PLAYED_IN]->(f)
 WHERE t.name = $team_name 
-  AND f.season = $season
+  AND gw.season = $season
 WITH DISTINCT p.player_name AS player, 
      r.position AS position,
      SUM(r.total_points) AS total_points
@@ -125,9 +128,9 @@ LIMIT $limit;
 // Example: player1 = "Salah", player2 = "Kane", season = "2021-22"
 // ==============================================================================
 
-MATCH (p:Player)-[r:PLAYED_IN]->(f:Fixture)
+MATCH (p:Player)-[r:PLAYED_IN]->(f:Fixture)<-[:HAS_FIXTURE]-(gw:Gameweek)
 WHERE (p.player_name CONTAINS $player1 OR p.player_name CONTAINS $player2)
-  AND f.season = $season
+  AND gw.season = $season
 WITH p.player_name AS player,
      SUM(r.goals_scored) AS goals,
      SUM(r.assists) AS assists,
@@ -148,8 +151,8 @@ ORDER BY total_points DESC;
 // Example: min_goals = 15, season = "2021-22"
 // ==============================================================================
 
-MATCH (p:Player)-[r:PLAYED_IN]->(f:Fixture)
-WHERE f.season = $season
+MATCH (p:Player)-[r:PLAYED_IN]->(f:Fixture)<-[:HAS_FIXTURE]-(gw:Gameweek)
+WHERE gw.season = $season AND r.minutes > 0
 WITH p.player_name AS player,
      r.position AS position,
      SUM(r.goals_scored) AS total_goals,
@@ -169,9 +172,10 @@ ORDER BY total_goals DESC;
 // Example: position = "MID", season = "2021-22", limit = 10
 // ==============================================================================
 
-MATCH (p:Player)-[r:PLAYED_IN]->(f:Fixture)
+MATCH (p:Player)-[r:PLAYED_IN]->(f:Fixture)<-[:HAS_FIXTURE]-(gw:Gameweek)
 WHERE r.position = $position 
-  AND f.season = $season
+  AND gw.season = $season
+  AND r.minutes > 0
 WITH p.player_name AS player,
      r.position AS position,
      SUM(r.assists) AS total_assists,
@@ -215,9 +219,9 @@ ORDER BY gameweek ASC;
 // Example: position = "MID", season = "2021-22", limit = 10
 // ==============================================================================
 
-MATCH (p:Player)-[r:PLAYED_IN]->(f:Fixture)
+MATCH (p:Player)-[r:PLAYED_IN]->(f:Fixture)<-[:HAS_FIXTURE]-(gw:Gameweek)
 WHERE r.position = $position 
-  AND f.season = $season
+  AND gw.season = $season
   AND r.minutes > 0
 WITH p.player_name AS player,
      r.position AS position,
@@ -234,3 +238,61 @@ RETURN player, position,
        ROUND(avg_creativity * 10) / 10 AS avg_creativity,
        ROUND(avg_threat * 10) / 10 AS avg_threat,
        total_points;
+
+
+// ==============================================================================
+// Query 11: Top Clean Sheet Keepers/Defenders
+// ==============================================================================
+// Description: Get players with most clean sheets by position
+// Parameters: $position (string), $season (string), $limit (integer)
+// Usage: Find best defensive players for clean sheet potential
+// Example: position = "DEF", season = "2022-23", limit = 10
+// ==============================================================================
+
+MATCH (p:Player)-[r:PLAYED_IN]->(f:Fixture)<-[:HAS_FIXTURE]-(gw:Gameweek)
+WHERE r.position = $position 
+  AND gw.season = $season
+  AND r.minutes > 0
+WITH p.player_name AS player,
+     r.position AS position,
+     SUM(r.clean_sheets) AS total_clean_sheets,
+     SUM(r.total_points) AS total_points,
+     SUM(r.minutes) AS total_minutes,
+     SUM(r.goals_conceded) AS total_goals_conceded,
+     COUNT(f) AS games_played
+ORDER BY total_clean_sheets DESC
+LIMIT $limit
+RETURN player, position, total_clean_sheets, total_points, 
+       total_minutes, total_goals_conceded, games_played;
+
+
+// ==============================================================================
+// Query 12: Best Value Players (Points per Price)
+// ==============================================================================
+// Description: Find best value-for-money players with high points per price ratio
+// Parameters: $position (string), $season (string), $max_price (float, optional), 
+//             $min_points (integer), $limit (integer)
+// Usage: Find budget-friendly players with good performance
+// Example: position = "MID", season = "2022-23", max_price = 7.5, min_points = 100, limit = 10
+// ==============================================================================
+
+MATCH (p:Player)-[r:PLAYED_IN]->(f:Fixture)<-[:HAS_FIXTURE]-(gw:Gameweek)
+WHERE r.position = $position 
+  AND gw.season = $season
+  AND r.minutes > 0
+  AND p.value IS NOT NULL
+WITH p.player_name AS player,
+     p.value AS price,
+     r.position AS position,
+     SUM(r.total_points) AS total_points,
+     SUM(r.goals_scored) AS total_goals,
+     SUM(r.assists) AS total_assists,
+     SUM(r.minutes) AS total_minutes
+WHERE total_points >= $min_points
+  AND price <= $max_price
+WITH player, price, position, total_points, total_goals, total_assists, total_minutes,
+     (total_points * 10.0 / price) AS points_per_million
+ORDER BY points_per_million DESC
+LIMIT $limit
+RETURN player, price, position, total_points, total_goals, total_assists, 
+       total_minutes, ROUND(points_per_million * 10) / 10 AS value_score;

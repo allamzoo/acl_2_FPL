@@ -9,6 +9,8 @@ import logging
 from typing import List, Dict, Any, Optional
 from .baseline_retriever import BaselineRetriever
 from .embedding_retriever import EmbeddingRetriever
+from src.preprocessing.intent_classifier import LLMIntentClassifier, SimpleIntentClassifier, Intent
+from src.preprocessing.entity_extractor import EntityExtractor
 
 logger = logging.getLogger(__name__)
 
@@ -23,29 +25,69 @@ class HybridRetriever:
     def __init__(self, 
                  embedding_model: str = "all-mpnet-base-v2",
                  use_hybrid_embeddings: bool = True,
-                 top_k_semantic: int = 5):
+                 top_k_semantic: int = 5,
+                 use_llm_intent: bool = False):  # Default to False (rule-based is more reliable)
         """
-        Initialize hybrid retriever.
+        Initialize hybrid retriever with two embedding configurations.
         
         Args:
-            embedding_model: Model for semantic search
+            embedding_model: Model for both semantic search configurations
             use_hybrid_embeddings: Use numerical+text hybrid embeddings
             top_k_semantic: Number of semantic results to retrieve
+            use_llm_intent: Use LLM-based intent classifier (vs simple rule-based)
         """
         self.baseline = BaselineRetriever()
-        self.embedding = EmbeddingRetriever(
-            model_name=embedding_model,
+        
+        # Initialize intent classifier (LLM or simple fallback)
+        self.use_llm_intent = use_llm_intent
+        if use_llm_intent:
+            try:
+                self.intent_classifier = LLMIntentClassifier()
+                logger.info("✓ LLM Intent Classifier initialized")
+            except Exception as e:
+                logger.warning(f"LLM classifier failed, using simple fallback: {e}")
+                self.intent_classifier = SimpleIntentClassifier()
+        else:
+            self.intent_classifier = SimpleIntentClassifier()
+            logger.info("✓ Simple Intent Classifier initialized")
+        
+        # Initialize entity extractor
+        self.entity_extractor = EntityExtractor()
+        logger.info("✓ Entity Extractor initialized")
+        
+        # Initialize both embedding retrievers using the same model
+        # but with different weighting strategies for diversification
+        # Model 1: Balanced (70% stats, 30% text) - favors statistical similarity
+        # Model 2: Equal (50% stats, 50% text) - balanced stat and semantic similarity
+        self.embedding_model_1 = EmbeddingRetriever(
+            model_name=embedding_model,  # all-mpnet-base-v2 with balanced weighting
             use_hybrid=use_hybrid_embeddings
         )
+        self.embedding_model_2 = EmbeddingRetriever(
+            model_name=embedding_model,  # Same model, equal weighting strategy
+            use_hybrid=use_hybrid_embeddings,
+            numerical_weight=0.5,  # Equal weighting: 50% stats, 50% text
+            text_weight=0.5
+        )
+        
+        # Keep reference for backward compatibility
+        self.embedding = self.embedding_model_1
+        
         self.top_k = top_k_semantic
         
-        logger.info(f"HybridRetriever initialized (model: {embedding_model}, "
-                   f"hybrid_embeddings: {use_hybrid_embeddings})")
+        logger.info(f"HybridRetriever initialized with:")
+        logger.info(f"  Embedding Model: {embedding_model}")
+        logger.info(f"  Model 1 weighting: 70% numerical, 30% text (stat-focused)")
+        logger.info(f"  Model 2 weighting: 50% numerical, 50% text (balanced)")
+        logger.info(f"  Hybrid embeddings: {use_hybrid_embeddings}")
+        logger.info(f"  Intent Classifier: {'LLM-based' if use_llm_intent else 'Rule-based'}")
     
     def close(self):
         """Close all connections."""
         self.baseline.close()
-        self.embedding.close()
+        self.embedding_model_1.close()
+        self.embedding_model_2.close()
+        self.entity_extractor.close()
     
     def __enter__(self):
         return self
@@ -54,133 +96,106 @@ class HybridRetriever:
         self.close()
     
     # =========================================================================
-    # Intent-based Retrieval Routing
+    # Intent-based Retrieval Routing (Using LLM Intent Classifier)
     # =========================================================================
     
-    def _classify_query_intent(self, query: str) -> str:
+    def _classify_query_intent(self, query: str) -> Dict[str, Any]:
         """
-        Classify the query intent to determine retrieval strategy.
+        Classify the query intent using LLM-based or rule-based classifier.
         
         Returns:
-            'specific' - Looking for specific player/team/stat
-            'semantic' - Similarity-based search
-            'comparative' - Comparing players
-            'aggregate' - Top scorers, rankings, etc.
+            Dictionary with intent classification and strategy
         """
-        query_lower = query.lower()
+        result = self.intent_classifier.classify(query)
+        intent_enum = result.get('intent', Intent.UNKNOWN)
+        confidence = result.get('confidence', 0.0)
         
-        # Specific entity lookups
-        if any(word in query_lower for word in ['who is', 'show me', 'find', 'get stats']):
-            return 'specific'
+        logger.info(f"Intent: {intent_enum.value} (confidence: {confidence:.2f})")
         
-        # Comparative queries
-        if any(word in query_lower for word in ['compare', 'vs', 'versus', 'better', 'difference']):
-            return 'comparative'
+        # Map Intent enum to retrieval strategy
+        if intent_enum in [Intent.PLAYER_SEARCH, Intent.PLAYER_STATS]:
+            strategy = 'specific'
+        elif intent_enum == Intent.PLAYER_COMPARISON:
+            strategy = 'comparative'
+        elif intent_enum in [Intent.TOP_SCORERS, Intent.TOP_ASSISTERS, Intent.TEAM_ANALYSIS, 
+                             Intent.HIGH_PERFORMERS, Intent.ICT_ANALYSIS,
+                             Intent.GAMEWEEK_PERFORMERS, Intent.PLAYER_FORM]:
+            strategy = 'aggregate'
+        else:
+            strategy = 'semantic'
         
-        # Aggregate/ranking queries
-        if any(word in query_lower for word in ['top', 'best', 'most', 'highest', 'leaders']):
-            return 'aggregate'
-        
-        # Default to semantic for descriptive queries
-        return 'semantic'
+        return {
+            'strategy': strategy,
+            'intent': intent_enum,
+            'confidence': confidence,
+            'reasoning': result.get('reasoning', 'Unknown')
+        }
     
     def _extract_player_names(self, query: str) -> List[str]:
-        """Extract potential player names from query."""
-        # Simple heuristic: capitalized words that might be names
-        words = query.split()
-        potential_names = []
-        
-        for i, word in enumerate(words):
-            if word and word[0].isupper() and word.lower() not in ['i', 'who', 'show', 'find', 'the']:
-                # Check for multi-word names
-                name_parts = [word]
-                for j in range(i+1, min(i+3, len(words))):
-                    if words[j] and words[j][0].isupper():
-                        name_parts.append(words[j])
-                    else:
-                        break
-                potential_names.append(' '.join(name_parts))
-        
-        return potential_names
+        """Extract player names using entity extractor."""
+        entities = self.entity_extractor.extract(query)
+        return entities.get('player_names', [])
+    
+    def _extract_entities(self, query: str) -> Dict[str, Any]:
+        """Extract all entities using entity extractor."""
+        return self.entity_extractor.extract(query)
     
     def _extract_position(self, query: str) -> Optional[str]:
-        """Extract position filter from query."""
-        query_lower = query.lower()
-        
-        position_map = {
-            'goalkeeper': 'GK',
-            'keeper': 'GK',
-            'gk': 'GK',
-            'defender': 'DEF',
-            'defence': 'DEF',
-            'def': 'DEF',
-            'fullback': 'DEF',
-            'midfielder': 'MID',
-            'midfield': 'MID',
-            'mid': 'MID',
-            'forward': 'FWD',
-            'striker': 'FWD',
-            'fwd': 'FWD',
-            'attacker': 'FWD'
-        }
-        
-        for keyword, position in position_map.items():
-            if keyword in query_lower:
-                return position
-        
-        return None
+        """Extract position filter using entity extractor."""
+        entities = self.entity_extractor.extract(query)
+        positions = entities.get('positions', [])
+        return positions[0] if positions else None
     
     def _extract_team(self, query: str) -> Optional[str]:
-        """Extract team name from query."""
-        # Common FPL teams
-        teams = [
-            'Arsenal', 'Aston Villa', 'Brentford', 'Brighton', 'Burnley',
-            'Chelsea', 'Crystal Palace', 'Everton', 'Leeds', 'Leicester',
-            'Liverpool', 'Man City', 'Man Utd', 'Newcastle', 'Norwich',
-            'Southampton', 'Spurs', 'Tottenham', 'Watford', 'West Ham', 'Wolves'
-        ]
-        
-        query_lower = query.lower()
-        for team in teams:
-            if team.lower() in query_lower:
-                return team
-        
-        return None
+        """Extract team name using entity extractor."""
+        entities = self.entity_extractor.extract(query)
+        teams = entities.get('team_names', [])
+        return teams[0] if teams else None
+    
+    def _extract_price_threshold(self, query: str) -> Optional[float]:
+        """Extract price threshold using entity extractor."""
+        entities = self.entity_extractor.extract(query)
+        thresholds = entities.get('thresholds', {})
+        return thresholds.get('price') if thresholds else None
     
     # =========================================================================
     # Unified Retrieval Methods
     # =========================================================================
     
-    def retrieve(self, query: str, season: str = "2021-22") -> Dict[str, Any]:
+    def retrieve(self, query: str, season: str = "2021-22", 
+                 retrieval_mode: str = "baseline+embedding1") -> Dict[str, Any]:
         """
-        Main retrieval method that combines baseline and semantic approaches.
-        Always runs BOTH methods then merges results.
+        Main retrieval method with configurable retrieval strategy.
         
         Args:
             query: Natural language query
             season: FPL season
+            retrieval_mode: Strategy to use:
+                - 'baseline' - Baseline only (no embeddings, no merge)
+                - 'baseline+embedding1' - Baseline + Embedding Model 1 (merged)
+                - 'baseline+embedding2' - Baseline + Embedding Model 2 (merged)
             
         Returns:
-            Unified context with results from both retrievers
+            Unified context with results based on selected mode
         """
-        intent = self._classify_query_intent(query)
-        logger.info(f"Query intent: {intent} | Query: '{query}'")
+        intent_result = self._classify_query_intent(query)
+        intent = intent_result['strategy']
+        intent_enum = intent_result['intent']
+        logger.info(f"Query intent: {intent} ({intent_enum.value}) | Confidence: {intent_result['confidence']:.2f} | Mode: {retrieval_mode}")
         
         context = {
             'query': query,
             'season': season,
             'intent': intent,
+            'intent_enum': intent_enum,
+            'intent_confidence': intent_result['confidence'],
+            'retrieval_mode': retrieval_mode,
             'baseline_results': {},
             'semantic_results': {},
             'unified_players': []
         }
         
-        # ALWAYS run semantic search first
-        logger.info("Running semantic embedding search...")
-        semantic_results = self.embedding.semantic_search(query, top_k=10, season=season)
-        context['semantic_results'] = semantic_results
-        
-        # ALWAYS run baseline query based on intent
+        # Run baseline query based on intent (ALWAYS)
         logger.info("Running baseline Cypher query...")
         if intent == 'specific':
             context = self._retrieve_baseline_specific(query, season, context)
@@ -191,24 +206,57 @@ class HybridRetriever:
         else:  # semantic - still get some baseline data
             context = self._retrieve_baseline_for_semantic(query, season, context)
         
-        # Merge and deduplicate results
-        logger.info("Merging and deduplicating results...")
-        context['unified_players'] = self._merge_results(context)
+        # Conditionally run semantic search based on retrieval_mode
+        if retrieval_mode == "baseline":
+            # Baseline only - no semantic search, no merge
+            logger.info("Mode: baseline-only (skipping semantic search)")
+            context['semantic_results'] = {'players': [], 'count': 0}
+            # Use baseline results directly as unified
+            baseline_players = []
+            for key, results in context['baseline_results'].items():
+                if isinstance(results, list):
+                    for item in results:
+                        player_dict = {'player_name': item.get('player', item.get('player_name', 'Unknown')),
+                                     'source': 'baseline',
+                                     'similarity_score': 0.0}
+                        player_dict.update(item)
+                        baseline_players.append(player_dict)
+            context['unified_players'] = baseline_players
+            
+        elif retrieval_mode == "baseline+embedding1":
+            # Baseline + Embedding Model 1
+            logger.info("Mode: baseline + embedding model 1 (merging results)")
+            semantic_results = self.embedding_model_1.semantic_search(query, top_k=10, season=season)
+            context['semantic_results'] = semantic_results
+            context['unified_players'] = self._merge_results(context)
+            
+        elif retrieval_mode == "baseline+embedding2":
+            # Baseline + Embedding Model 2
+            logger.info("Mode: baseline + embedding model 2 (merging results)")
+            semantic_results = self.embedding_model_2.semantic_search(query, top_k=10, season=season)
+            context['semantic_results'] = semantic_results
+            context['unified_players'] = self._merge_results(context)
+            
+        else:
+            raise ValueError(f"Invalid retrieval_mode: {retrieval_mode}. "
+                           f"Must be 'baseline', 'baseline+embedding1', or 'baseline+embedding2'")
         
         return context
     
     def _retrieve_baseline_specific(self, query: str, season: str, context: Dict) -> Dict:
         """Get baseline data for specific player/team lookups."""
-        player_names = self._extract_player_names(query)
+        entities = self._extract_entities(query)
         
+        player_names = entities.get('player_names', [])
         if player_names:
             for name in player_names[:2]:
                 player_stats = self.baseline.get_player_season_stats(name, season)
                 if player_stats:
                     context['baseline_results'][f'player_{name}'] = player_stats
         
-        team = self._extract_team(query)
-        if team:
+        team_names = entities.get('team_names', [])
+        if team_names:
+            team = team_names[0]
             team_players = self.baseline.get_team_players(team, season, top_n=10)
             context['baseline_results']['team_players'] = team_players
         
@@ -216,7 +264,8 @@ class HybridRetriever:
     
     def _retrieve_baseline_comparative(self, query: str, season: str, context: Dict) -> Dict:
         """Get baseline data for player comparison queries."""
-        player_names = self._extract_player_names(query)
+        entities = self._extract_entities(query)
+        player_names = entities.get('player_names', [])
         
         if len(player_names) >= 2:
             comparison = self.baseline.compare_players(player_names[0], player_names[1], season)
@@ -227,9 +276,38 @@ class HybridRetriever:
     def _retrieve_baseline_aggregate(self, query: str, season: str, context: Dict) -> Dict:
         """Get baseline data for top/best/ranking queries."""
         query_lower = query.lower()
-        position = self._extract_position(query)
+        entities = self._extract_entities(query)
         
-        if 'goal' in query_lower or 'scorer' in query_lower:
+        # Extract position from entities
+        positions = entities.get('positions', [])
+        position = positions[0] if positions else None
+        
+        # Budget/Value queries - check for price-related keywords
+        if any(keyword in query_lower for keyword in ['budget', 'cheap', 'value', 'low price', 'affordable']):
+            # Extract price threshold if mentioned (e.g., "under 7.0", "below 6.5")
+            max_price = self._extract_price_threshold(query)
+            
+            if position:
+                results = self.baseline.get_best_value_players(
+                    position, season, max_price=max_price, min_points=100, limit=10
+                )
+            else:
+                # Default to midfielders for value queries
+                results = self.baseline.get_best_value_players(
+                    'MID', season, max_price=max_price, min_points=100, limit=10
+                )
+            context['baseline_results']['best_value'] = results
+            
+        elif 'clean sheet' in query_lower or 'cleansheet' in query_lower:
+            # Clean sheet queries - typically for defenders or goalkeepers
+            if position:
+                results = self.baseline.get_top_clean_sheet_keepers(position, season, limit=10)
+            else:
+                # Default to defenders for clean sheet queries
+                results = self.baseline.get_top_clean_sheet_keepers('DEF', season, limit=10)
+            context['baseline_results']['top_clean_sheets'] = results
+            
+        elif 'goal' in query_lower or 'scorer' in query_lower:
             if position:
                 results = self.baseline.get_top_scorers(position, season, limit=10)
             else:
@@ -249,13 +327,13 @@ class HybridRetriever:
             
         elif 'ict' in query_lower or 'index' in query_lower:
             if position:
-                results = self.baseline.get_best_ict_performers(position, season, limit=10)
+                results = self.baseline.get_top_ict_players(position, season, limit=10)
             else:
-                results = self.baseline.get_best_ict_performers('MID', season, limit=10)
+                results = self.baseline.get_top_ict_players('MID', season, limit=10)
             context['baseline_results']['best_ict'] = results
             
         elif 'point' in query_lower or 'performer' in query_lower:
-            results = self.baseline.get_high_performers(season, min_goals=10)
+            results = self.baseline.get_high_performers(min_goals=10, season=season)
             context['baseline_results']['high_performers'] = results
         
         return context
