@@ -422,6 +422,46 @@ class BaselineRetriever:
         })
     
     # =========================================================================
+    # Query 11: Top Clean Sheet Defenders/Goalkeepers
+    # =========================================================================
+    
+    def get_top_clean_sheet_keepers(self, position: str, season: str, limit: int = 10) -> List[Dict[str, Any]]:
+        """
+        Find players with most clean sheets (typically defenders and goalkeepers).
+        
+        Args:
+            position: Player position (DEF or GK typically)
+            season: Season (e.g., "2021-22", "2022-23")
+            limit: Maximum number of results
+            
+        Returns:
+            List of top clean sheet players
+        """
+        query = """
+        MATCH (p:Player)-[played:PLAYED_IN]->(f:Fixture)<-[:HAS_FIXTURE]-(gw:Gameweek)
+        WHERE played.position = $position 
+          AND gw.season = $season
+          AND played.minutes > 0
+        WITH p.player_name AS player,
+             played.position AS position,
+             SUM(played.clean_sheets) AS total_clean_sheets,
+             SUM(played.goals_scored) AS total_goals,
+             SUM(played.assists) AS total_assists,
+             SUM(played.total_points) AS total_points,
+             COUNT(f) AS games_played
+        ORDER BY total_clean_sheets DESC
+        LIMIT $limit
+        RETURN player, position, total_clean_sheets, total_goals, 
+               total_assists, total_points, games_played
+        """
+        
+        return self._execute_query(query, {
+            "position": position,
+            "season": season,
+            "limit": limit
+        })
+    
+    # =========================================================================
     # Helper Methods
     # =========================================================================
     
@@ -474,3 +514,64 @@ class BaselineRetriever:
             formatted = formatted.rstrip(", ") + "\n"
         
         return formatted
+    
+    # =========================================================================
+    # Query 12: Best Value Players (Points per Price)
+    # =========================================================================
+    
+    def get_best_value_players(self, position: str, season: str, 
+                               max_price: float = None, min_points: int = 100,
+                               limit: int = 10) -> List[Dict[str, Any]]:
+        """
+        Find best value-for-money players (high points per price ratio).
+        
+        Args:
+            position: Player position (FWD, MID, DEF, GK)
+            season: Season (e.g., "2021-22", "2022-23")
+            max_price: Maximum price threshold (e.g., 7.0 for £7.0m)
+            min_points: Minimum total points threshold
+            limit: Maximum number of results
+            
+        Returns:
+            List of players with best value (points per million)
+        """
+        query = """
+        MATCH (p:Player)-[played:PLAYED_IN]->(f:Fixture)<-[:HAS_FIXTURE]-(gw:Gameweek)
+        WHERE played.position = $position 
+          AND gw.season = $season
+          AND played.minutes > 0
+          AND p.value IS NOT NULL
+        WITH p.player_name AS player,
+             p.value AS price,
+             played.position AS position,
+             SUM(played.total_points) AS total_points,
+             SUM(played.goals_scored) AS total_goals,
+             SUM(played.assists) AS total_assists,
+             SUM(played.minutes) AS total_minutes
+        WHERE total_points >= $min_points
+        """
+        
+        # Add price filter if specified
+        if max_price is not None:
+            query += " AND price <= $max_price\n"
+        
+        query += """
+        WITH player, price, position, total_points, total_goals, total_assists, total_minutes,
+             (total_points * 10.0 / price) AS points_per_million
+        ORDER BY points_per_million DESC
+        LIMIT $limit
+        RETURN player, price, position, total_points, total_goals, total_assists, 
+               total_minutes, ROUND(points_per_million * 10) / 10 AS value_score
+        """
+        
+        params = {
+            "position": position,
+            "season": season,
+            "min_points": min_points,
+            "limit": limit
+        }
+        
+        if max_price is not None:
+            params["max_price"] = max_price
+        
+        return self._execute_query(query, params)

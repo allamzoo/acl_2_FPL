@@ -98,9 +98,15 @@ class EmbeddingRetriever:
             logger.info(f"Searching for: '{query}'")
         
         if self.use_hybrid:
-            return self._hybrid_search(query, top_k, min_minutes, position_filter)
+            results = self._hybrid_search(query, top_k * 2, min_minutes, position_filter)  # Get 2x for re-ranking
         else:
-            return self._text_only_search(query, top_k, min_minutes, position_filter)
+            results = self._text_only_search(query, top_k * 2, min_minutes, position_filter)
+        
+        # Re-rank based on actual stats relevance
+        if results and season:
+            results = self._rerank_by_stats(results, query, season, top_k)
+        
+        return results[:top_k]
     
     def _extract_position_from_query(self, query: str) -> str:
         """Extract position from query text."""
@@ -116,6 +122,109 @@ class EmbeddingRetriever:
             return 'FWD'
         
         return None
+    
+    def _rerank_by_stats(self, results: List[Dict[str, Any]], query: str, 
+                        season: str, top_k: int) -> List[Dict[str, Any]]:
+        """
+        Re-rank similarity results by combining semantic similarity with actual stats relevance.
+        
+        Args:
+            results: Initial similarity search results
+            query: User query
+            season: Season to get stats for
+            top_k: Number of results to return
+            
+        Returns:
+            Re-ranked results with boosted relevance scores
+        """
+        query_lower = query.lower()
+        
+        # Detect what stats are important from query
+        wants_assists = any(word in query_lower for word in ['assist', 'creative', 'creativity', 'playmaker', 'provider'])
+        wants_goals = any(word in query_lower for word in ['goal', 'score', 'scorer', 'striker', 'prolific'])
+        wants_points = any(word in query_lower for word in ['points', 'fpl', 'best', 'top'])
+        wants_clean_sheets = any(word in query_lower for word in ['clean sheet', 'defensive'])
+        
+        # Get actual stats for all players
+        player_names = [r['player_name'] for r in results]
+        player_stats = self.get_player_details(player_names, season=season)
+        
+        # Create stat lookup
+        stats_lookup = {p['player_name']: p for p in player_stats}
+        
+        # Re-rank with stat boost
+        for result in results:
+            name = result['player_name']
+            if name not in stats_lookup:
+                continue
+            
+            stats = stats_lookup[name]
+            base_similarity = result['similarity_score']
+            
+            # Calculate stat relevance boost/penalty
+            stat_boost = 0.0
+            
+            if wants_assists:
+                # Boost players with high assists, heavily penalize those with none
+                assists = stats.get('total_assists', 0)
+                if assists >= 10:
+                    stat_boost += 0.20
+                elif assists >= 5:
+                    stat_boost += 0.15
+                elif assists >= 3:
+                    stat_boost += 0.10
+                elif assists >= 1:
+                    stat_boost += 0.05
+                else:
+                    stat_boost -= 0.30  # Heavy penalty for 0 assists on assist queries
+            
+            if wants_goals:
+                # Boost players with high goals, penalize those with few
+                goals = stats.get('total_goals', 0)
+                if goals >= 20:
+                    stat_boost += 0.20
+                elif goals >= 15:
+                    stat_boost += 0.15
+                elif goals >= 10:
+                    stat_boost += 0.10
+                elif goals >= 5:
+                    stat_boost += 0.05
+                else:
+                    if 'score' in query_lower or 'scorer' in query_lower:
+                        stat_boost -= 0.20  # Penalty for low scorers on scorer queries
+            
+            if wants_points:
+                # Boost players with high points
+                points = stats.get('total_points', 0)
+                if points >= 200:
+                    stat_boost += 0.15
+                elif points >= 150:
+                    stat_boost += 0.10
+                elif points >= 100:
+                    stat_boost += 0.05
+            
+            if wants_clean_sheets:
+                # Boost players with clean sheets
+                clean_sheets = stats.get('clean_sheets', 0)
+                if clean_sheets >= 15:
+                    stat_boost += 0.15
+                elif clean_sheets >= 10:
+                    stat_boost += 0.10
+                elif clean_sheets >= 5:
+                    stat_boost += 0.05
+            
+            # Apply boost/penalty (allow negative scores to filter out bad matches)
+            result['similarity_score'] = max(0.0, base_similarity + stat_boost)
+            result['stat_boost'] = stat_boost
+        
+        # Filter out players with very low scores (< 0.5 after penalties)
+        results = [r for r in results if r['similarity_score'] >= 0.5]
+        
+        # Re-sort by new scores
+        results.sort(key=lambda x: x['similarity_score'], reverse=True)
+        
+        logger.info(f"Re-ranked {len(results)} players by stats relevance")
+        return results
     
     def _text_only_search(self, query: str, top_k: int, min_minutes: int, position_filter: str = None) -> List[Dict[str, Any]]:
         """Legacy text-only search."""

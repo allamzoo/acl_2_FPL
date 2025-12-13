@@ -59,7 +59,8 @@ class FPLAnswerGenerator:
         model: Optional[str] = None,
         task_type: str = "answer",
         max_tokens: int = 512,
-        temperature: float = 0.3
+        temperature: float = 0.3,
+        retrieval_mode: str = "baseline+embedding1"
     ) -> Dict[str, Any]:
         """
         Answer FPL question using Graph-RAG pipeline.
@@ -67,10 +68,14 @@ class FPLAnswerGenerator:
         Args:
             query: User's question
             season: FPL season
-            model: LLM model ('llama-3.1-8b', 'llama-3.1-70b', 'gemma-2-9b')
+            model: LLM model ('llama-4-maverick', 'qwen-3-32b', 'gpt-oss-20b')
             task_type: Prompt task type ('answer', 'recommend', 'compare', 'explain')
             max_tokens: Max response tokens
             temperature: Sampling temperature
+            retrieval_mode: Retrieval strategy:
+                - 'baseline' - Baseline only (no embeddings, no merge)
+                - 'baseline+embedding1' - Baseline + Embedding Model 1 (merged)
+                - 'baseline+embedding2' - Baseline + Embedding Model 2 (merged)
             
         Returns:
             Dict with 'query', 'answer', 'context', 'model', 'tokens', 'cost'
@@ -78,11 +83,11 @@ class FPLAnswerGenerator:
         if model is None:
             model = self.default_llm
         
-        logger.info(f"Processing query: '{query}' (season: {season}, model: {model})")
+        logger.info(f"Processing query: '{query}' (season: {season}, model: {model}, mode: {retrieval_mode})")
         
-        # Step 1: Retrieve context from Knowledge Graph
-        logger.info("Step 1: Retrieving context from Knowledge Graph...")
-        context = self.retriever.retrieve(query, season)
+        # Step 1: Retrieve context from Knowledge Graph with selected mode
+        logger.info(f"Step 1: Retrieving context (mode: {retrieval_mode})...")
+        context = self.retriever.retrieve(query, season, retrieval_mode=retrieval_mode)
         
         num_players = len(context.get('unified_players', []))
         logger.info(f"✓ Retrieved {num_players} relevant players")
