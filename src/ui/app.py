@@ -12,8 +12,9 @@ from pathlib import Path
 project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
 
-from src.preprocessing.intent_classifier import SimpleIntentClassifier, Intent
+from src.preprocessing.intent_classifier import SimpleIntentClassifier, HybridIntentClassifier, Intent
 from src.preprocessing.entity_extractor import EntityExtractor
+from src.preprocessing.context_handler import ContextAwareFollowupHandler
 from src.retrieval.baseline_retriever import BaselineRetriever
 # Defer hybrid retriever import to avoid loading embedding models on startup
 # from src.retrieval.hybrid_retriever import HybridRetriever
@@ -392,6 +393,18 @@ def load_custom_css():
             color: {FPL_COLORS['primary']} !important;
         }}
         
+        /* JSON viewer inside tabs - white text on dark background */
+        .stTabs [data-baseweb="tab-panel"] .stJson {{
+            background-color: #1e1e1e !important;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            padding: 1rem;
+            border-radius: 8px;
+        }}
+        
+        .stTabs [data-baseweb="tab-panel"] .stJson * {{
+            color: white !important;
+        }}
+        
         /* Main container text colors - White on purple background by default */
         .main .block-container {{
             color: white;
@@ -499,11 +512,17 @@ def initialize_session_state():
         st.session_state.driver = None
     if 'intent_classifier' not in st.session_state:
         st.session_state.intent_classifier = SimpleIntentClassifier()
+    if 'classifier_type' not in st.session_state:
+        st.session_state.classifier_type = "Rule-Based"
     if 'entity_extractor' not in st.session_state:
         try:
             st.session_state.entity_extractor = EntityExtractor()
         except:
             st.session_state.entity_extractor = None
+    if 'context_handler' not in st.session_state:
+        st.session_state.context_handler = None
+    if 'use_context' not in st.session_state:
+        st.session_state.use_context = True
     if 'answer_generator' not in st.session_state:
         st.session_state.answer_generator = None
         st.session_state.generator_error = None
@@ -574,10 +593,37 @@ def render_sidebar():
         # Retrieval method
         retrieval_method = st.radio(
             "Retrieval Method",
-            ["Baseline (Cypher)", "LLM-Powered", "Hybrid (Advanced)"],
-            index=0,
-            help="Choose how to retrieve information from the knowledge graph"
+            ["Baseline Only", "Baseline + Embedding Model 1", "Baseline + Embedding Model 2"],
+            index=1,
+            help="Choose retrieval strategy:\n• Baseline Only - Pure Cypher queries\n• Model 1 - all-mpnet-base-v2 (more accurate)\n• Model 2 - all-MiniLM-L6-v2 (faster)"
         )
+        
+        # Intent Classifier Selection
+        st.markdown("### 🎯 Intent Classifier")
+        classifier_type = st.radio(
+            "Classifier Type",
+            ["Rule-Based", "Smart Hybrid"],
+            index=1,
+            help="• Rule-Based - Fast keyword matching only\n• Smart Hybrid - Rules first, then smart LLM agent for uncertain cases"
+        )
+        
+        # Context-Aware Follow-up
+        st.markdown("### 💬 Conversation Context")
+        use_context = st.checkbox(
+            "Remember conversation context",
+            value=True,
+            help="Smart follow-up handling - understands references to previous queries"
+        )
+        
+        if use_context and st.session_state.context_handler:
+            history_count = len(st.session_state.context_handler.history)
+            if history_count > 0:
+                st.caption(f"📝 {history_count} quer{'y' if history_count == 1 else 'ies'} in context")
+                if st.button("Clear Context", use_container_width=True):
+                    st.session_state.context_handler.clear_history()
+                    st.rerun()
+        
+        st.markdown("---")
         
         # Temperature
         temperature = st.slider(
@@ -663,6 +709,8 @@ def render_sidebar():
     return {
         'model_name': model_name,
         'retrieval_method': retrieval_method,
+        'classifier_type': classifier_type,
+        'use_context': use_context,
         'temperature': temperature,
         'max_results': max_results,
         'season': season,
@@ -676,122 +724,98 @@ def render_sidebar():
 def process_query(query: str, config: dict):
     """Process user query and return results."""
     
-    # Check if LLM-powered mode is enabled
-    use_llm = config['retrieval_method'] in ['Hybrid (Recommended)', 'LLM-Powered']
+    # Initialize context handler if enabled
+    if config.get('use_context') and st.session_state.context_handler is None:
+        with st.spinner("🔄 Initializing context handler..."):
+            st.session_state.context_handler = ContextAwareFollowupHandler()
+    
+    # Update intent classifier based on user selection
+    if config.get('classifier_type') != st.session_state.classifier_type:
+        st.session_state.classifier_type = config['classifier_type']
+        if config['classifier_type'] == "Smart Hybrid":
+            with st.spinner("🔄 Loading Smart Hybrid Classifier with Groq..."):
+                st.session_state.intent_classifier = HybridIntentClassifier()
+        else:
+            st.session_state.intent_classifier = SimpleIntentClassifier()
+    
+    # Handle context-aware follow-up
+    original_query = query
+    context_info = None
+    if config.get('use_context') and st.session_state.context_handler:
+        context_result = st.session_state.context_handler.resolve_context(query)
+        query = context_result['resolved_query']
+        context_info = context_result
+        
+        # Show context resolution if it's a follow-up
+        if context_result['is_followup']:
+            st.info(f"💬 **Follow-up detected!** Resolved to: *{query}*")
+
+    
+    # Map UI retrieval method to hybrid retriever mode
+    mode_mapping = {
+        "Baseline Only": "baseline",
+        "Baseline + Embedding Model 1": "baseline+embedding1",
+        "Baseline + Embedding Model 2": "baseline+embedding2"
+    }
+    retrieval_mode = mode_mapping.get(config['retrieval_method'], "baseline+embedding1")
     
     # Initialize LLM manager on first use (lightweight, no model downloads)
-    if use_llm and st.session_state.answer_generator is None:
+    if st.session_state.answer_generator is None:
         try:
             with st.spinner("🔄 Initializing LLM system..."):
                 st.session_state.answer_generator = create_llm_manager(backend='groq')
         except Exception as e:
             st.session_state.generator_error = str(e)
             st.error(f"Failed to initialize LLM: {e}")
-            use_llm = False
+            return None
     
-    if use_llm and st.session_state.answer_generator:
-        # Use LLM with baseline retrieval (no embeddings needed)
+    # Always use LLM with hybrid retriever
+    if st.session_state.answer_generator:
         try:
-            # Step 1: Get context from baseline retriever
-            retriever = BaselineRetriever()
+            # Initialize hybrid retriever (handles intent classification and entity extraction internally)
+            from src.retrieval.hybrid_retriever import HybridRetriever
+            retriever = HybridRetriever(use_llm_intent=False)
             
-            # Classify intent to choose right retrieval method
-            intent_result = st.session_state.intent_classifier.classify(query)
-            method_name = st.session_state.intent_classifier.get_query_mapping(intent_result['intent'])
-            
-            # Extract entities for better retrieval
+            # Extract entities for season detection
             entities = {}
             if st.session_state.entity_extractor:
                 try:
                     entities = st.session_state.entity_extractor.extract(query)
+                    # Debug: show extracted season
+                    if config.get('show_debug', False) and entities.get('seasons'):
+                        st.write(f"🔍 Extracted seasons from '{query}': {entities['seasons']}")
                 except:
                     pass
             
-            # Retrieve context
-            context_data = []
-            if hasattr(retriever, method_name) and method_name != "unknown":
-                method = getattr(retriever, method_name)
-                
-                # Call method with appropriate parameters based on intent
-                try:
-                    if intent_result['intent'] == Intent.TOP_SCORERS:
-                        position = None
-                        if config.get('position_filter') and len(config['position_filter']) > 0:
-                            position = config['position_filter'][0]
-                        elif 'positions' in entities and entities['positions']:
-                            position = entities['positions'][0]
-                        context_data = method(position=position, season=config.get('season', '2022-23'), limit=config['max_results'])
-                    
-                    elif intent_result['intent'] == Intent.TOP_ASSISTERS:
-                        position = None
-                        if config.get('position_filter') and len(config['position_filter']) > 0:
-                            position = config['position_filter'][0]
-                        elif 'positions' in entities and entities['positions']:
-                            position = entities['positions'][0]
-                        context_data = method(position=position, season=config.get('season', '2022-23'), limit=config['max_results'])
-                    
-                    elif intent_result['intent'] == Intent.PLAYER_SEARCH and 'players' in entities and entities['players']:
-                        context_data = method(entities['players'][0])
-                    
-                    elif intent_result['intent'] == Intent.TEAM_ANALYSIS and 'teams' in entities and entities['teams']:
-                        context_data = method(entities['teams'][0])
-                    
-                    else:
-                        # Try generic call
-                        try:
-                            context_data = method(limit=config['max_results'])
-                        except TypeError:
-                            try:
-                                context_data = method()
-                            except:
-                                context_data = []
-                except Exception as e:
-                    # Fallback to generic call
-                    try:
-                        context_data = method(limit=config['max_results'])
-                    except:
-                        try:
-                            context_data = method()
-                        except:
-                            context_data = []
+            # Determine actual season to use: prioritize extracted season from query over UI dropdown
+            actual_season = config.get('season', '2022-23')
+            if entities.get('seasons') and len(entities['seasons']) > 0:
+                actual_season = entities['seasons'][0]  # Use season from query if explicitly mentioned
+                if config.get('show_debug', False):
+                    st.write(f"🔍 Using season from query: {actual_season}")
+            else:
+                if config.get('show_debug', False):
+                    st.write(f"🔍 Using default season from UI: {actual_season}")
             
-            # Debug: Show what we retrieved
+            # Step 1: Retrieve context using hybrid retriever
+            retrieval_result = retriever.retrieve(
+                query=query,
+                season=actual_season,
+                retrieval_mode=retrieval_mode
+            )
+            
+            # Debug: Show retrieval info
             if config.get('show_debug', False):
-                st.write(f"🔍 Debug - Retrieved {len(context_data) if context_data else 0} items")
-                if context_data:
-                    st.write("Sample data:", context_data[:2])
-            
-            # Step 2: Build structured prompt
-            # Format context data for LLM - convert list to unified_players format
-            formatted_context = {
-                'unified_players': [],
-                'baseline_results': {}
-            }
-            
-            # Convert context_data to player format
-            if context_data and isinstance(context_data, list) and len(context_data) > 0:
-                for item in context_data:
-                    if isinstance(item, dict):
-                        # Normalize field names
-                        player_entry = {
-                            'player_name': item.get('player', item.get('player_name', 'Unknown')),
-                            'position': item.get('position', 'N/A'),
-                            'total_goals': item.get('total_goals', item.get('goals', 0)),
-                            'total_assists': item.get('total_assists', item.get('assists', 0)),
-                            'total_points': item.get('total_points', item.get('points', 0)),
-                            'source': 'baseline'
-                        }
-                        # Add any additional fields from the original item
-                        for key, value in item.items():
-                            if key not in player_entry:
-                                player_entry[key] = value
-                        formatted_context['unified_players'].append(player_entry)
+                st.write(f"🔍 Debug - Retrieval Mode: {retrieval_mode}")
+                st.write(f"🔍 Intent: {retrieval_result.get('intent_enum', 'N/A')} (confidence: {retrieval_result.get('intent_confidence', 0):.2f})")
+                st.write(f"🔍 Retrieved {len(retrieval_result.get('unified_players', []))} players")
             
             # If no data retrieved, show warning
-            if not formatted_context['unified_players']:
-                st.warning(f"⚠️ No data retrieved for intent: {intent_result['intent']} (method: {method_name})")
-                st.info("💡 Tip: Try using 'Baseline (Cypher)' retrieval method instead")
+            if not retrieval_result.get('unified_players'):
+                st.warning(f"⚠️ No data retrieved for query")
+                st.info("💡 Tip: Try rephrasing your question")
             
+            # Step 2: Determine task type for prompt building
             task_type = 'answer'
             if 'recommend' in query.lower() or 'suggest' in query.lower():
                 task_type = 'recommend'
@@ -800,7 +824,8 @@ def process_query(query: str, config: dict):
             elif 'explain' in query.lower() or 'why' in query.lower():
                 task_type = 'explain'
             
-            prompt = build_fpl_prompt(query, formatted_context, task=task_type)
+            # Build prompt with hybrid retrieval results
+            prompt = build_fpl_prompt(query, retrieval_result, task=task_type)
             
             # Step 3: Generate answer with LLM
             llm_response = st.session_state.answer_generator.generate(
@@ -810,177 +835,69 @@ def process_query(query: str, config: dict):
                 temperature=config['temperature']
             )
             
+            # Add to context history if enabled
+            if config.get('use_context') and st.session_state.context_handler:
+                intent_str = str(retrieval_result.get('intent_enum', 'unknown'))
+                st.session_state.context_handler.add_to_history(
+                    query=original_query,
+                    intent=intent_str,
+                    entities=entities,
+                    response_summary=llm_response['response'][:200]  # First 200 chars
+                )
+            
             return {
-                'intent': intent_result,
-                'entities': {},
-                'context': context_data[:10],  # Show top 10
+                'intent': retrieval_result.get('intent_enum'),
+                'entities': entities,
+                'context': retrieval_result.get('unified_players', [])[:10],  # Show top 10
                 'response': llm_response['response'],
                 'retrieval_method': config['retrieval_method'],
+                'retrieval_mode': retrieval_mode,
                 'model': llm_response['model'],
                 'tokens': llm_response['tokens'],
                 'cost': llm_response.get('cost', 0.0),
                 'backend': llm_response.get('backend', 'unknown'),
+                'season': actual_season,
                 'cypher_query': '',
-                'llm_result': llm_response
+                'llm_result': llm_response,
+                'retrieval_details': retrieval_result,
+                'context_info': context_info,
+                'original_query': original_query
             }
         except Exception as e:
-            st.error(f"LLM generation failed: {str(e)}")
-            # Fallback to baseline
-            use_llm = False
+            st.error(f"Error during retrieval or LLM generation: {str(e)}")
+            import traceback
+            if config.get('show_debug', False):
+                st.code(traceback.format_exc())
+            return {
+                'intent': None,
+                'entities': {},
+                'context': [],
+                'response': f"Sorry, I encountered an error: {str(e)}",
+                'retrieval_method': config['retrieval_method'],
+                'error': str(e)
+            }
     
-    # Fallback: Use baseline retrieval
-    retriever = BaselineRetriever()
-    
-    # Intent classification
-    intent_result = st.session_state.intent_classifier.classify(query)
-    
-    # Entity extraction
-    entities = {}
-    if st.session_state.entity_extractor:
-        try:
-            entities = st.session_state.entity_extractor.extract(query)
-        except Exception as e:
-            pass
-    
-    # Get retriever method based on intent
-    method_name = st.session_state.intent_classifier.get_query_mapping(intent_result['intent'])
-    
-    # Retrieve context
-    context = []
-    cypher_query = ""
-    
-    try:
-        if hasattr(retriever, method_name) and method_name != "unknown":
-            method = getattr(retriever, method_name)
-            
-            # Try to call the method with appropriate parameters
-            if intent_result['intent'] == Intent.PLAYER_SEARCH and 'players' in entities and entities['players']:
-                context = method(entities['players'][0])
-            elif intent_result['intent'] == Intent.TOP_SCORERS:
-                # Get position if available, default to FWD
-                position = "FWD"
-                if 'positions' in entities and entities['positions'] and len(entities['positions']) > 0:
-                    position = entities['positions'][0]
-                # Apply position filter if set
-                if config.get('position_filter') and len(config['position_filter']) > 0:
-                    position = config['position_filter'][0]
-                context = method(position=position, season=config.get('season', '2022-23'), limit=config['max_results'])
-            elif intent_result['intent'] == Intent.TOP_ASSISTERS:
-                # Get position if available, default to MID
-                position = "MID"
-                if 'positions' in entities and entities['positions'] and len(entities['positions']) > 0:
-                    position = entities['positions'][0]
-                # Apply position filter if set
-                if config.get('position_filter') and len(config['position_filter']) > 0:
-                    position = config['position_filter'][0]
-                context = method(position=position, season=config.get('season', '2022-23'), limit=config['max_results'])
-            elif intent_result['intent'] == Intent.TEAM_ANALYSIS and 'teams' in entities and entities['teams']:
-                context = method(entities['teams'][0])
-            else:
-                # Generic call
-                try:
-                    context = method(limit=config['max_results'])
-                except TypeError:
-                    context = method()
-        else:
-            # For unknown intents, try to get top scorers as a default
-            try:
-                context = retriever.get_top_scorers(position="FWD", season="2022-23", limit=config['max_results'])
-            except:
-                context = []
-            
-            if not context:
-                context = [{
-                    "message": "I couldn't determine the specific query type. Please try:",
-                    "examples": [
-                        "Who are the top scorers?",
-                        "Show me the best assisters",
-                        "Find player Haaland",
-                        "Show me Arsenal players"
-                    ]
-                }]
-            
-    except Exception as e:
-        context = [{"error": f"Retrieval failed: {str(e)}"}]
-    
-    # Generate simple response
-    response = format_simple_response(query, context, intent_result, config.get('season', '2022-23'))
-    
+    # If LLM initialization failed, return error
     return {
-        'intent': intent_result,
-        'entities': entities,
-        'context': context,
-        'response': response,
+        'intent': None,
+        'entities': {},
+        'context': [],
+        'response': "LLM system is not initialized. Please refresh the page.",
         'retrieval_method': config['retrieval_method'],
-        'cypher_query': cypher_query,
-        'season': config.get('season', '2022-23')
+        'error': 'LLM not initialized'
     }
-
-
-def format_simple_response(query: str, context: list, intent_result: dict, season: str = "2022-23") -> str:
-    """Format a simple response without LLM."""
-    
-    if not context or (isinstance(context, list) and len(context) == 0):
-        return "❌ No results found for your query."
-    
-    if isinstance(context, list) and len(context) > 0 and 'error' in context[0]:
-        return f"❌ {context[0]['error']}"
-    
-    intent = intent_result['intent']
-    
-    # Format based on intent
-    if intent == Intent.TOP_SCORERS:
-        response = f"## ⚽ Top Scorers ({season} Season)\n\n"
-        for i, player_data in enumerate(context[:10], 1):
-            name = player_data.get('player', player_data.get('player_name', 'Unknown'))
-            goals = player_data.get('total_goals', 0)
-            assists = player_data.get('total_assists', 0)
-            points = player_data.get('total_points', 0)
-            response += f"{i}. **{name}** - ⚽ {goals} goals, 🎯 {assists} assists, 📊 {points} points\n"
-        return response
-    
-    elif intent == Intent.TOP_ASSISTERS:
-        response = f"## 🎯 Top Assist Providers ({season} Season)\n\n"
-        for i, player_data in enumerate(context[:10], 1):
-            name = player_data.get('player', player_data.get('player_name', 'Unknown'))
-            assists = player_data.get('total_assists', 0)
-            goals = player_data.get('total_goals', 0)
-            points = player_data.get('total_points', 0)
-            response += f"{i}. **{name}** - 🎯 {assists} assists, ⚽ {goals} goals, 📊 {points} points\n"
-        return response
-    
-    elif intent == Intent.PLAYER_SEARCH or intent == Intent.PLAYER_STATS:
-        if context:
-            player = context[0]
-            name = player.get('player_name', player.get('name', 'Unknown'))
-            response = f"## 👤 {name}\n\n"
-            for key, value in player.items():
-                if key != 'player_name' and key != 'name':
-                    response += f"**{key.replace('_', ' ').title()}:** {value}\n"
-            return response
-    
-    elif intent == Intent.TEAM_ANALYSIS:
-        if context:
-            response = "## 👥 Team Players\n\n"
-            for i, player in enumerate(context, 1):
-                name = player.get('player_name', player.get('name', 'Unknown'))
-                position = player.get('position', 'Unknown')
-                response += f"{i}. **{name}** - {position}\n"
-            return response
-    
-    # Generic response
-    response = f"## 📊 Results ({len(context)} found)\n\n"
-    for i, item in enumerate(context[:10], 1):
-        response += f"### Result {i}\n"
-        for key, value in item.items():
-            response += f"**{key.replace('_', ' ').title()}:** {value}\n"
-        response += "\n"
-    
-    return response
 
 
 def render_results(results: dict, config: dict):
     """Render query results."""
+    
+    # Show context resolution if it was a follow-up
+    context_info = results.get('context_info')
+    if context_info and context_info.get('is_followup'):
+        original = results.get('original_query', '')
+        resolved = context_info.get('resolved_query', '')
+        if original != resolved:
+            st.info(f"💬 **Follow-up detected!** Understood as: *\"{resolved}\"*")
     
     # Main response with enhanced styling
     st.markdown("### 🎯 Answer")
@@ -1017,12 +934,21 @@ def render_results(results: dict, config: dict):
         
         with col1:
             st.markdown("**Intent Classification:**")
-            st.write(f"**Intent:** {results['intent']['intent']}")
-            st.write(f"**Confidence:** {results['intent']['confidence']:.2%}")
+            intent = results.get('intent')
+            if intent:
+                # Handle both dict and enum formats
+                if isinstance(intent, dict):
+                    st.write(f"**Intent:** {intent.get('intent', 'N/A')}")
+                    st.write(f"**Confidence:** {intent.get('confidence', 0):.2%}")
+                else:
+                    # It's an enum
+                    st.write(f"**Intent:** {intent.value if hasattr(intent, 'value') else str(intent)}")
+            else:
+                st.write("No intent classification available")
         
         with col2:
             st.markdown("**Extracted Entities:**")
-            if results['entities']:
+            if results.get('entities'):
                 for entity_type, entities in results['entities'].items():
                     if entities:
                         # Ensure entities is a list
@@ -1035,10 +961,15 @@ def render_results(results: dict, config: dict):
     
     if tab3:
         with tab3:
-            st.markdown("**Retrieval Method:**")
-            st.code(results['retrieval_method'])
+            st.markdown("**Retrieval Configuration:**")
+            col1, col2 = st.columns(2)
+            with col1:
+                st.write(f"**Method:** {results.get('retrieval_method', 'N/A')}")
+            with col2:
+                st.write(f"**Mode:** {results.get('retrieval_mode', 'N/A')}")
             
-            if 'model' in results and results.get('retrieval_method') != 'Baseline (Cypher)':
+            if 'model' in results:
+                st.markdown("**LLM Details:**")
                 col1, col2, col3 = st.columns(3)
                 with col1:
                     st.metric("Model", results.get('model', 'N/A'))
@@ -1047,9 +978,15 @@ def render_results(results: dict, config: dict):
                 with col3:
                     st.metric("Backend", results.get('backend', 'N/A'))
             
-            if config.get('show_cypher', False) and 'cypher_query' in results and results['cypher_query']:
-                st.markdown("**Executed Cypher Query:**")
-                st.code(results['cypher_query'], language='cypher')
+            if 'retrieval_details' in results:
+                with st.expander("📊 Retrieval Details"):
+                    details = results['retrieval_details']
+                    st.write(f"**Players Retrieved:** {len(details.get('unified_players', []))}")
+                    st.write(f"**Intent Confidence:** {details.get('intent_confidence', 0):.2%}")
+                    if 'baseline_results' in details:
+                        st.write(f"**Baseline Results:** {len(details.get('baseline_results', {}).get('results', []))} items")
+                    if 'semantic_results' in details:
+                        st.write(f"**Semantic Results:** {len(details.get('semantic_results', {}).get('results', []))} items")
             
             if 'llm_result' in results:
                 with st.expander("🔍 Full LLM Response Details"):
@@ -1058,7 +995,6 @@ def render_results(results: dict, config: dict):
                         'completion_tokens': results['llm_result'].get('completion_tokens', 0),
                         'total_tokens': results['llm_result'].get('tokens', 0),
                         'cost': results['llm_result'].get('cost', 0.0),
-                        'num_players_retrieved': results['llm_result'].get('context', {}).get('num_players', 0)
                     })
 
 

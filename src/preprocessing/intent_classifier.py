@@ -332,3 +332,205 @@ class SimpleIntentClassifier:
             Intent.ICT_ANALYSIS: "get_top_ict_players",
         }
         return mapping.get(intent, "unknown")
+
+
+class HybridIntentClassifier:
+    """
+    Smart hybrid intent classifier combining rule-based logic with LLM intelligence.
+    
+    Strategy:
+    1. Uses the SAME rule-based classification logic first
+    2. If confidence is high (>= threshold), returns rule-based result immediately
+    3. If uncertain or UNKNOWN, asks a smart LLM (Groq API) to classify with context
+    4. LLM is given the rule-based attempt to make better decisions
+    
+    This is fast (rules first) but intelligent (LLM for hard cases).
+    """
+    
+    def __init__(
+        self, 
+        confidence_threshold: float = 0.85,
+        model_name: str = "llama-4-maverick"
+    ):
+        """
+        Initialize smart hybrid classifier.
+        
+        Args:
+            confidence_threshold: Minimum confidence to trust rule-based result
+            model_name: Model key for LLM ('llama-4-maverick', 'qwen-3-32b', 'gpt-oss-20b')
+        """
+        # Use the existing rule-based classifier
+        self.rule_classifier = SimpleIntentClassifier()
+        self.confidence_threshold = confidence_threshold
+        self.model_name = model_name
+        
+        # Try to initialize Groq LLM
+        try:
+            from src.llm.models import create_llm_manager
+            self.llm_manager = create_llm_manager(backend='groq')
+            self.llm_available = True
+            logger.info(f"Smart Hybrid Classifier initialized with Groq model: {model_name}")
+        except Exception as e:
+            logger.warning(f"Groq LLM not available: {e}")
+            logger.warning("Will use rule-based only")
+            self.llm_available = False
+            self.llm_manager = None
+    
+    def classify(self, query: str) -> Dict[str, Any]:
+        """
+        Smart classification: rules first, LLM for uncertain cases.
+        
+        Args:
+            query: User's natural language query
+            
+        Returns:
+            Classification result with method used
+        """
+        # Step 1: Try rule-based classification
+        rule_result = self.rule_classifier.classify(query)
+        
+        # Step 2: Check if rule-based is confident enough
+        if (rule_result["confidence"] >= self.confidence_threshold and 
+            rule_result["intent"] != Intent.UNKNOWN):
+            
+            logger.info(
+                f"✓ Rule-based confident: {rule_result['intent'].value} "
+                f"(confidence: {rule_result['confidence']:.2f})"
+            )
+            
+            return {
+                **rule_result,
+                "method": "rule_based",
+                "llm_used": False
+            }
+        
+        # Step 3: Rules uncertain - use smart LLM
+        logger.info(
+            f"⚠ Rule-based uncertain (confidence: {rule_result['confidence']:.2f}, "
+            f"intent: {rule_result['intent'].value}) - asking smart LLM"
+        )
+        
+        if not self.llm_available:
+            logger.warning("LLM not available, returning uncertain rule-based result")
+            return {
+                **rule_result,
+                "method": "rule_based",
+                "llm_used": False,
+                "note": "LLM unavailable, used uncertain result"
+            }
+        
+        # Step 4: Ask LLM to classify with context
+        llm_result = self._ask_smart_llm(query, rule_result)
+        
+        return llm_result
+    
+    def _ask_smart_llm(self, query: str, rule_result: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Ask smart LLM to classify the intent using context.
+        
+        Args:
+            query: Original query
+            rule_result: Rule-based classification attempt
+            
+        Returns:
+            LLM classification result
+        """
+        # Build smart prompt with available intents
+        intent_descriptions = {
+            "player_search": "Finding a specific player by name",
+            "player_stats": "Getting player statistics for a season", 
+            "top_scorers": "Finding top goal scorers by position",
+            "top_assisters": "Finding top assist providers",
+            "team_analysis": "Analyzing team players and performance",
+            "gameweek_performers": "Finding top performers in a specific gameweek",
+            "player_comparison": "Comparing multiple players",
+            "high_performers": "Finding players exceeding performance thresholds",
+            "player_form": "Analyzing recent player form",
+            "ict_analysis": "Finding players with best ICT scores",
+        }
+        
+        # Build the prompt
+        prompt = f"""You are an intent classifier for an FPL (Fantasy Premier League) system.
+
+User Query: "{query}"
+
+Rule-based pattern matching suggested:
+- Intent: {rule_result['intent'].value}
+- Confidence: {rule_result['confidence']:.2f}
+- Reasoning: {rule_result['reasoning']}
+
+Available intents:
+{chr(10).join(f"- {intent}: {desc}" for intent, desc in intent_descriptions.items())}
+
+Analyze the query and classify it. Output ONLY a JSON object with this format (no markdown, no extra text):
+{{"intent": "player_search", "confidence": 0.90, "reasoning": "brief reason"}}"""
+
+        try:
+            # Call Groq LLM
+            result = self.llm_manager.generate(
+                prompt=prompt,
+                model=self.model_name,
+                temperature=0.1,  # Low temperature for consistent classification
+                max_tokens=150
+            )
+            response = result.get('response', '')
+            
+            # Parse JSON response
+            import json
+            import re
+            
+            # Try to extract JSON - be more flexible
+            # First try direct JSON parsing
+            try:
+                parsed = json.loads(response.strip())
+            except:
+                # Try to find JSON in the response (handle markdown, extra text)
+                json_match = re.search(r'\{[^\}]+\}', response, re.DOTALL)
+                if json_match:
+                    parsed = json.loads(json_match.group())
+                else:
+                    logger.error(f"No valid JSON found. Response: {response[:200]}")
+                    raise ValueError(f"No valid JSON found in response")
+            
+            intent_str = parsed.get('intent', 'unknown')
+            confidence = float(parsed.get('confidence', 0.5))
+            reasoning = parsed.get('reasoning', 'LLM classification')
+            
+            # Map string to Intent enum
+            intent = Intent.UNKNOWN
+            for intent_enum in Intent:
+                if intent_enum.value == intent_str:
+                    intent = intent_enum
+                    break
+            
+            logger.info(
+                f"🤖 LLM classified as: {intent.value} "
+                f"(confidence: {confidence:.2f})"
+            )
+            
+            return {
+                "intent": intent,
+                "confidence": confidence,
+                "reasoning": reasoning,
+                "query": query,
+                "method": "llm",
+                "llm_used": True,
+                "rule_based_suggestion": {
+                    "intent": rule_result["intent"].value,
+                    "confidence": rule_result["confidence"]
+                }
+            }
+                
+        except Exception as e:
+            logger.error(f"LLM classification failed: {e}")
+            logger.warning("Falling back to rule-based result")
+            return {
+                **rule_result,
+                "method": "rule_based",
+                "llm_used": False,
+                "note": f"LLM failed: {str(e)}"
+            }
+    
+    def get_query_mapping(self, intent: Intent) -> str:
+        """Map intent to retriever method."""
+        return self.rule_classifier.get_query_mapping(intent)

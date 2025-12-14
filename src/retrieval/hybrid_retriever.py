@@ -216,11 +216,25 @@ class HybridRetriever:
             for key, results in context['baseline_results'].items():
                 if isinstance(results, list):
                     for item in results:
-                        player_dict = {'player_name': item.get('player', item.get('player_name', 'Unknown')),
-                                     'source': 'baseline',
-                                     'similarity_score': 0.0}
-                        player_dict.update(item)
-                        baseline_players.append(player_dict)
+                        if isinstance(item, dict):
+                            player_dict = {
+                                'player_name': item.get('player', item.get('player_name', 'Unknown')),
+                                'source': 'baseline',
+                                'similarity_score': 0.0
+                            }
+                            player_dict.update(item)
+                            baseline_players.append(player_dict)
+                elif isinstance(results, dict):
+                    # Single player data (not in a list)
+                    player_dict = {
+                        'player_name': results.get('player', results.get('player_name', 'Unknown')),
+                        'source': 'baseline',
+                        'similarity_score': 0.0
+                    }
+                    player_dict.update(results)
+                    baseline_players.append(player_dict)
+            
+            logger.info(f"Baseline-only mode: {len(baseline_players)} players retrieved")
             context['unified_players'] = baseline_players
             
         elif retrieval_mode == "baseline+embedding1":
@@ -345,11 +359,36 @@ class HybridRetriever:
             results = self.baseline.get_high_performers(min_goals=10, season=season)
             context['baseline_results']['high_performers'] = results
         
+        else:
+            # Fallback: if no specific keyword matched, try to get top scorers
+            logger.warning(f"No specific aggregate query matched, using fallback: top scorers")
+            if position:
+                results = self.baseline.get_top_scorers(position, season, limit=10)
+            else:
+                results = self.baseline.get_top_scorers('FWD', season, limit=10)
+            context['baseline_results']['top_scorers'] = results
+        
         return context
     
     def _retrieve_baseline_for_semantic(self, query: str, season: str, context: Dict) -> Dict:
-        """Get baseline stats for top semantic matches."""
-        # Get detailed stats for top 3 semantic matches
+        """Get baseline stats for top semantic matches or fallback data."""
+        # For baseline-only mode, semantic results won't be available yet
+        # So we provide some default baseline data for common queries
+        query_lower = query.lower()
+        
+        # Try to provide relevant baseline data based on query keywords
+        if 'scorer' in query_lower or 'goal' in query_lower:
+            results = self.baseline.get_top_scorers('FWD', season, limit=10)
+            context['baseline_results']['top_scorers'] = results
+        elif 'assist' in query_lower:
+            results = self.baseline.get_top_assisters('MID', season, limit=10)
+            context['baseline_results']['top_assisters'] = results
+        else:
+            # Default fallback: get high performers
+            results = self.baseline.get_high_performers(min_goals=10, season=season)
+            context['baseline_results']['high_performers'] = results
+        
+        # If semantic results are available (for embedding modes), enhance with player stats
         if context['semantic_results'].get('players'):
             top_player_names = [p['player_name'] for p in context['semantic_results']['players'][:3]]
             for name in top_player_names:
