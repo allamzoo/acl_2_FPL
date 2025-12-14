@@ -6,6 +6,7 @@ to provide comprehensive context for LLM generation.
 """
 
 import logging
+import os
 from typing import List, Dict, Any, Optional
 from .baseline_retriever import BaselineRetriever
 from .embedding_retriever import EmbeddingRetriever

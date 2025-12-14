@@ -14,6 +14,38 @@ from src.llm.models import LLMManager, create_llm_manager
 logger = logging.getLogger(__name__)
 
 
+def strip_think_tags(response: str) -> str:
+    """
+    Remove <think> tags and reasoning from Qwen model responses.
+    Qwen models output chain-of-thought reasoning in <think>...</think> tags.
+    This function extracts only the final answer after the thinking process.
+    
+    Args:
+        response: Raw model response potentially containing <think> tags
+        
+    Returns:
+        Clean answer without thinking process
+    """
+    import re
+    
+    # Remove complete <think>...</think> blocks
+    cleaned = re.sub(r'<think>.*?</think>', '', response, flags=re.DOTALL)
+    
+    # Also remove incomplete <think> tags (when response was truncated)
+    # This handles cases where thinking didn't complete due to token limits
+    cleaned = re.sub(r'<think>.*$', '', cleaned, flags=re.DOTALL)
+    
+    # Clean up extra whitespace left behind
+    cleaned = cleaned.strip()
+    
+    # If nothing left after removing think tags, return original
+    # (model might not have used think tags)
+    if not cleaned:
+        return response
+    
+    return cleaned
+
+
 class FPLAnswerGenerator:
     """
     End-to-end FPL question answering with Graph-RAG.
@@ -109,11 +141,19 @@ class FPLAnswerGenerator:
         
         logger.info(f"✓ Answer generated ({llm_response['tokens']} tokens)")
         
+        # Post-process response: remove <think> tags from Qwen models
+        raw_response = llm_response['response']
+        clean_response = strip_think_tags(raw_response) if 'qwen' in model.lower() else raw_response
+        
+        if clean_response != raw_response:
+            logger.info(f"✓ Removed chain-of-thought reasoning from Qwen response")
+        
         # Combine everything into final result
         result = {
             'query': query,
             'season': season,
-            'answer': llm_response['response'],
+            'answer': clean_response,  # Use cleaned response
+            'raw_answer': raw_response,  # Keep original with thinking for debugging
             'context': {
                 'num_players': num_players,
                 'unified_players': context.get('unified_players', [])[:10],  # Top 10
@@ -179,10 +219,15 @@ class FPLAnswerGenerator:
         # Combine results
         results = {}
         for model_key, llm_response in llm_responses.items():
+            # Post-process: remove <think> tags from Qwen models
+            raw_response = llm_response['response']
+            clean_response = strip_think_tags(raw_response) if 'qwen' in model_key.lower() else raw_response
+            
             results[model_key] = {
                 'query': query,
                 'season': season,
-                'answer': llm_response['response'],
+                'answer': clean_response,
+                'raw_answer': raw_response if clean_response != raw_response else None,
                 'model': model_key,
                 'model_info': llm_response.get('model_info', {}),
                 'tokens': llm_response['tokens'],

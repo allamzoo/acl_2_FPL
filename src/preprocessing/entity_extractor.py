@@ -40,11 +40,27 @@ class EntityExtractor:
         # Predefined patterns
         self.positions = ["FWD", "MID", "DEF", "GK", "FORWARD", "MIDFIELDER", "DEFENDER", "GOALKEEPER"]
         self.position_map = {
+            # General positions
             "forward": "FWD", "forwards": "FWD", "striker": "FWD", "strikers": "FWD",
             "midfielder": "MID", "midfielders": "MID", "mid": "MID",
-            "defender": "DEF", "defenders": "DEF", "def": "DEF", "defence": "DEF",
+            "defender": "DEF", "defenders": "DEF", "def": "DEF", "defence": "DEF", "defense": "DEF",
             "goalkeeper": "GK", "goalkeepers": "GK", "keeper": "GK", "keepers": "GK",
-            "fwd": "FWD", "gk": "GK"
+            "fwd": "FWD", "gk": "GK",
+            # Specific defender positions (all map to DEF since DB doesn't differentiate)
+            "lb": "DEF", "left back": "DEF", "left-back": "DEF", "leftback": "DEF",
+            "rb": "DEF", "right back": "DEF", "right-back": "DEF", "rightback": "DEF",
+            "cb": "DEF", "centre back": "DEF", "center back": "DEF", "centre-back": "DEF", "center-back": "DEF",
+            "fullback": "DEF", "full back": "DEF", "full-back": "DEF", "fb": "DEF",
+            "wingback": "DEF", "wing back": "DEF", "wing-back": "DEF", "wb": "DEF",
+            # Specific midfielder positions
+            "cm": "MID", "central midfielder": "MID", "central-midfielder": "MID",
+            "cdm": "MID", "defensive midfielder": "MID", "dm": "MID",
+            "cam": "MID", "attacking midfielder": "MID", "am": "MID",
+            "lm": "MID", "left midfielder": "MID", "left-midfielder": "MID",
+            "rm": "MID", "right midfielder": "MID", "right-midfielder": "MID",
+            "winger": "MID", "wingers": "MID", "lw": "MID", "rw": "MID",
+            # Specific forward positions
+            "st": "FWD", "cf": "FWD", "centre forward": "FWD", "center forward": "FWD"
         }
         
         logger.info("Entity extractor initialized")
