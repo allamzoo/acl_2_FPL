@@ -41,6 +41,14 @@ class EmbeddingRetriever:
         self.numerical_weight = numerical_weight
         self.text_weight = text_weight
         
+        # Set Neo4j property names based on model
+        if model_name == "all-MiniLM-L6-v2":
+            self.text_embedding_property = "text_embedding_minilm"
+            self.numerical_features_property = "numerical_features_minilm"
+        else:  # all-mpnet-base-v2 or other
+            self.text_embedding_property = "text_embedding"
+            self.numerical_features_property = "numerical_features"
+        
         logger.info(f"Loading embedding model: {model_name}")
         self.model = SentenceTransformer(model_name)
         
@@ -347,22 +355,23 @@ class EmbeddingRetriever:
         # Extract numerical preferences from query
         query_num_preferences = self._extract_query_numerical_features(query)
         
-        # Retrieve players with hybrid embeddings
-        cypher_query = """
+        # Retrieve players with hybrid embeddings (use model-specific properties)
+        cypher_query = f"""
         MATCH (p:Player)-[r:PLAYED_IN]->(f:Fixture)<-[:HAS_FIXTURE]-(gw:Gameweek)
-        WHERE p.numerical_features IS NOT NULL AND p.text_embedding IS NOT NULL
+        WHERE p.{self.numerical_features_property} IS NOT NULL 
+          AND p.{self.text_embedding_property} IS NOT NULL
         """
         
         # Add position filter if provided
         if position_filter:
             cypher_query += " AND r.position = $position"
         
-        cypher_query += """
+        cypher_query += f"""
         WITH p, SUM(r.minutes) as total_minutes
         WHERE total_minutes >= $min_minutes
         RETURN DISTINCT p.player_name AS name,
-               p.numerical_features AS num_features,
-               p.text_embedding AS text_emb
+               p.{self.numerical_features_property} AS num_features,
+               p.{self.text_embedding_property} AS text_emb
         """
         
         try:

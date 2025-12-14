@@ -55,18 +55,19 @@ class HybridRetriever:
         self.entity_extractor = EntityExtractor()
         logger.info("✓ Entity Extractor initialized")
         
-        # Initialize both embedding retrievers using the same model
-        # but with different weighting strategies for diversification
-        # Model 1: Balanced (70% stats, 30% text) - favors statistical similarity
-        # Model 2: Equal (50% stats, 50% text) - balanced stat and semantic similarity
+        # Initialize both embedding retrievers using DIFFERENT models
+        # Model 1: all-mpnet-base-v2 (768 dims) - more comprehensive
+        # Model 2: all-MiniLM-L6-v2 (384 dims) - faster, lightweight
         self.embedding_model_1 = EmbeddingRetriever(
-            model_name=embedding_model,  # all-mpnet-base-v2 with balanced weighting
-            use_hybrid=use_hybrid_embeddings
+            model_name="all-mpnet-base-v2",
+            use_hybrid=use_hybrid_embeddings,
+            numerical_weight=0.7,
+            text_weight=0.3
         )
         self.embedding_model_2 = EmbeddingRetriever(
-            model_name=embedding_model,  # Same model, equal weighting strategy
+            model_name="all-MiniLM-L6-v2",  # Different model!
             use_hybrid=use_hybrid_embeddings,
-            numerical_weight=0.5,  # Equal weighting: 50% stats, 50% text
+            numerical_weight=0.5,
             text_weight=0.5
         )
         
@@ -76,9 +77,8 @@ class HybridRetriever:
         self.top_k = top_k_semantic
         
         logger.info(f"HybridRetriever initialized with:")
-        logger.info(f"  Embedding Model: {embedding_model}")
-        logger.info(f"  Model 1 weighting: 70% numerical, 30% text (stat-focused)")
-        logger.info(f"  Model 2 weighting: 50% numerical, 50% text (balanced)")
+        logger.info(f"  Embedding Model 1: all-mpnet-base-v2 (768 dims, 70% stats / 30% text)")
+        logger.info(f"  Embedding Model 2: all-MiniLM-L6-v2 (384 dims, 50% stats / 50% text)")
         logger.info(f"  Hybrid embeddings: {use_hybrid_embeddings}")
         logger.info(f"  Intent Classifier: {'LLM-based' if use_llm_intent else 'Rule-based'}")
     
@@ -282,8 +282,17 @@ class HybridRetriever:
         positions = entities.get('positions', [])
         position = positions[0] if positions else None
         
+        # Extract gameweek if mentioned
+        gameweeks = entities.get('gameweeks', [])
+        gameweek = gameweeks[0] if gameweeks else None
+        
+        # Gameweek-specific queries
+        if gameweek and ('gameweek' in query_lower or 'gw' in query_lower):
+            results = self.baseline.get_gameweek_top_performers(gameweek, season, limit=10)
+            context['baseline_results']['gameweek_top_performers'] = results
+            
         # Budget/Value queries - check for price-related keywords
-        if any(keyword in query_lower for keyword in ['budget', 'cheap', 'value', 'low price', 'affordable']):
+        elif any(keyword in query_lower for keyword in ['budget', 'cheap', 'value', 'low price', 'affordable']):
             # Extract price threshold if mentioned (e.g., "under 7.0", "below 6.5")
             max_price = self._extract_price_threshold(query)
             
