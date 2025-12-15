@@ -45,6 +45,7 @@ Instructions:
 5. Do NOT make up information or use knowledge outside the provided context
 6. Do NOT hallucinate player names, statistics, or facts not present in the context
 7. Be concise but informative - include relevant numbers and comparisons
+8. IMPORTANT: If you use <think> tags for reasoning, you MUST provide a final answer after the closing </think> tag
 
 USER QUESTION: {query}
 
@@ -181,7 +182,24 @@ Your explanation:"""
             context_parts.append("-" * 80)
             
             for key, value in baseline.items():
-                if value and isinstance(value, list) and len(value) > 0:
+                # Special handling for squad_builder
+                if key == 'squad_builder' and isinstance(value, dict):
+                    squad_data = value
+                    context_parts.append(f"\nSQUAD BUILDER (Budget: £{squad_data.get('total_cost', 0):.1f}m / £100m):")
+                    context_parts.append(f"Remaining Budget: £{squad_data.get('remaining_budget', 0):.1f}m")
+                    context_parts.append(f"Total Points: {squad_data.get('total_points', 0)}")
+                    formation = squad_data.get('formation', {})
+                    context_parts.append(f"Formation: {formation.get('GK', 0)} GK, {formation.get('DEF', 0)} DEF, {formation.get('MID', 0)} MID, {formation.get('FWD', 0)} FWD")
+                    context_parts.append("\nSelected Squad:")
+                    
+                    squad = squad_data.get('squad', [])
+                    for i, player in enumerate(squad, 1):
+                        context_parts.append(f"  {i:2d}. {player['player_name']:30s} ({player['position']}) - "
+                                           f"£{player['price']:.1f}m, {player['total_points']}pts, "
+                                           f"{player['goals']}G, {player['assists']}A, "
+                                           f"Value: {player['value_ratio']:.1f}")
+                
+                elif value and isinstance(value, list) and len(value) > 0:
                     context_parts.append(f"\n{key}:")
                     for item in value[:10]:  # Limit to top 10
                         context_parts.append(f"  {item}")

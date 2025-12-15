@@ -157,7 +157,19 @@ class HybridRetriever:
         """Extract price threshold using entity extractor."""
         entities = self.entity_extractor.extract(query)
         thresholds = entities.get('thresholds', {})
-        return thresholds.get('price') if thresholds else None
+        
+        # Check for 'price' or 'million' key
+        if 'price' in thresholds:
+            price_info = thresholds['price']
+        elif 'million' in thresholds:
+            price_info = thresholds['million']
+        else:
+            return None
+        
+        # Return the value if it's a dict with 'value' key, otherwise return it directly
+        if isinstance(price_info, dict):
+            return price_info.get('value')
+        return price_info
     
     # =========================================================================
     # Unified Retrieval Methods
@@ -287,24 +299,61 @@ class HybridRetriever:
         gameweeks = entities.get('gameweeks', [])
         gameweek = gameweeks[0] if gameweeks else None
         
+        # Squad building queries - check FIRST before other price/budget queries
+        if any(keyword in query_lower for keyword in ['build squad', 'build team', 'optimal squad', 
+                                                        'optimal team', 'squad under', 'team under']):
+            # Extract budget from query if mentioned
+            budget = self._extract_price_threshold(query)
+            if budget is None:
+                budget = 100.0  # Default FPL budget
+            
+            squad_data = self.baseline.build_squad_under_budget(
+                season=season,
+                budget=budget,
+                min_points=30,
+                min_games=10
+            )
+            context['baseline_results']['squad_builder'] = squad_data
+            return context
+        
         # Gameweek-specific queries
-        if gameweek and ('gameweek' in query_lower or 'gw' in query_lower):
-            results = self.baseline.get_gameweek_top_performers(gameweek, season, limit=10)
+        elif gameweek and ('gameweek' in query_lower or 'gw' in query_lower):
+            results = self.baseline.get_gameweek_top_performers(
+                gameweek, season, position=position, limit=10
+            )
             context['baseline_results']['gameweek_top_performers'] = results
             
+        # Most expensive players query - check first
+        elif any(word in query_lower for word in ['expensive', 'highest price', 'most costly', 'priciest', 'costliest']):
+            if position:
+                results = self.baseline.get_most_expensive_players(
+                    season, position=position, limit=10, min_points=50
+                )
+            else:
+                results = self.baseline.get_most_expensive_players(
+                    season, limit=10, min_points=50
+                )
+            context['baseline_results']['most_expensive'] = results
+            
         # Budget/Value queries - check for price-related keywords
-        elif any(keyword in query_lower for keyword in ['budget', 'cheap', 'value', 'low price', 'affordable']):
-            # Extract price threshold if mentioned (e.g., "under 7.0", "below 6.5")
-            max_price = self._extract_price_threshold(query)
+        elif any(keyword in query_lower for keyword in ['budget', 'cheap', 'value', 'low price', 'affordable', 'price', 'million']):
+            # Extract price threshold if mentioned (e.g., "under 7.0", "above 7.0")
+            max_price = None
+            min_price = None
+            
+            if any(word in query_lower for word in ['under', 'below', 'cheaper than', 'less than']):
+                max_price = self._extract_price_threshold(query)
+            elif any(word in query_lower for word in ['above', 'over', 'more than', 'at least']):
+                min_price = self._extract_price_threshold(query)
             
             if position:
                 results = self.baseline.get_best_value_players(
-                    position, season, max_price=max_price, min_points=100, limit=10
+                    position, season, max_price=max_price, min_price=min_price, min_points=100, limit=10
                 )
             else:
                 # Default to midfielders for value queries
                 results = self.baseline.get_best_value_players(
-                    'MID', season, max_price=max_price, min_points=100, limit=10
+                    'MID', season, max_price=max_price, min_price=min_price, min_points=100, limit=10
                 )
             context['baseline_results']['best_value'] = results
             

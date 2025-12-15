@@ -28,19 +28,37 @@ def strip_think_tags(response: str) -> str:
     """
     import re
     
-    # Remove complete <think>...</think> blocks
-    cleaned = re.sub(r'<think>.*?</think>', '', response, flags=re.DOTALL)
+    # First, remove all complete <think>...</think> blocks
+    cleaned = re.sub(r'<think>.*?</think>', '', response, flags=re.DOTALL | re.IGNORECASE)
     
-    # Also remove incomplete <think> tags (when response was truncated)
-    # This handles cases where thinking didn't complete due to token limits
-    cleaned = re.sub(r'<think>.*$', '', cleaned, flags=re.DOTALL)
+    # Then remove any remaining incomplete/unclosed <think> tags
+    # This handles truncated responses where </think> never appeared
+    cleaned = re.sub(r'<think>.*$', '', cleaned, flags=re.DOTALL | re.IGNORECASE)
     
-    # Clean up extra whitespace left behind
+    # Also remove orphaned </think> tags (in case of split content)
+    cleaned = re.sub(r'</think>', '', cleaned, flags=re.IGNORECASE)
+    
+    # Clean up extra whitespace and empty lines
+    cleaned = '\n'.join(line for line in cleaned.split('\n') if line.strip())
     cleaned = cleaned.strip()
     
-    # If nothing left after removing think tags, return original
-    # (model might not have used think tags)
-    if not cleaned:
+    # If nothing meaningful left after removing think tags, 
+    # return a helpful summary instead of empty string
+    if not cleaned or len(cleaned) < 10:
+        # Check if original contained thinking but no conclusion
+        if '<think>' in response.lower():
+            # Extract key points from the thinking if possible
+            # Look for conclusions, recommendations, or final statements
+            lines = response.split('\n')
+            # Get last few non-empty lines from thinking as a summary
+            meaningful_lines = [l.strip() for l in lines if l.strip() and not l.strip().startswith('<')]
+            if meaningful_lines:
+                # Return last paragraph as implied conclusion
+                last_paragraph = '\n'.join(meaningful_lines[-5:])
+                if len(last_paragraph) > 50:
+                    return f"[Answer extracted from reasoning]\n\n{last_paragraph}"
+            
+            return "[Model provided only internal reasoning without a final answer]"
         return response
     
     return cleaned
@@ -132,21 +150,31 @@ class FPLAnswerGenerator:
         
         # Step 3: Generate answer with LLM
         logger.info(f"Step 3: Generating answer with {model}...")
+        
+        # Increase token limit for Qwen models (they use think tags which consume tokens)
+        adjusted_max_tokens = max_tokens
+        if 'qwen' in model.lower():
+            adjusted_max_tokens = max(1024, max_tokens * 2)
+            logger.info(f"Increased max_tokens to {adjusted_max_tokens} for Qwen model")
+        
         llm_response = self.llm_manager.generate(
             prompt=prompt,
             model=model,
-            max_tokens=max_tokens,
+            max_tokens=adjusted_max_tokens,
             temperature=temperature
         )
         
         logger.info(f"✓ Answer generated ({llm_response['tokens']} tokens)")
         
-        # Post-process response: remove <think> tags from Qwen models
+        # Post-process response: remove <think> tags from all Qwen models
         raw_response = llm_response['response']
-        clean_response = strip_think_tags(raw_response) if 'qwen' in model.lower() else raw_response
         
-        if clean_response != raw_response:
-            logger.info(f"✓ Removed chain-of-thought reasoning from Qwen response")
+        # Check both the model parameter and the actual model ID used
+        is_qwen = 'qwen' in model.lower() or 'qwen' in str(llm_response.get('model', '')).lower()
+        clean_response = strip_think_tags(raw_response) if is_qwen else raw_response
+        
+        if is_qwen and clean_response != raw_response:
+            logger.info(f"✓ Removed <think> tags from Qwen response ({len(raw_response) - len(clean_response)} chars removed)")
         
         # Combine everything into final result
         result = {

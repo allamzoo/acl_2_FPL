@@ -46,13 +46,16 @@ def main():
             intent_str = str(intent)
         
         print(f"📊 Intent: {intent_str}")
-        print(f"🎯 Confidence: {results.get('confidence', 0):.2%}")
-        print(f"👥 Total Players Retrieved: {len(results.get('players', []))}")
+        print(f"🎯 Confidence: {results.get('confidence', results.get('intent_confidence', 0)):.2%}")
         
-        if results.get('players'):
+        # Get players from unified_players in context
+        players = results.get('unified_players', results.get('players', []))
+        print(f"👥 Total Players Retrieved: {len(players)}")
+        
+        if players:
             print(f"\n📋 TOP 10 MIDFIELDERS (Gameweek 5):")
-            for i, player in enumerate(results['players'][:10], 1):
-                name = player.get('player', player.get('name', 'Unknown'))
+            for i, player in enumerate(players[:10], 1):
+                name = player.get('player_name', player.get('player', player.get('name', 'Unknown')))
                 position = player.get('position', 'N/A')
                 
                 # Gameweek-specific points (not season total)

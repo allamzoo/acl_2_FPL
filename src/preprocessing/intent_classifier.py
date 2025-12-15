@@ -273,12 +273,26 @@ class SimpleIntentClassifier:
                 "query": query
             }
         
-        # HIGH_PERFORMERS (threshold-based)
-        if any(phrase in query_lower for phrase in ["more than", "at least", "minimum", ">=", ">", "over "]):
+        # HIGH_PERFORMERS (threshold-based OR value-based OR expensive)
+        if any(phrase in query_lower for phrase in ["more than", "at least", "minimum", ">=", ">", "over ", 
+                                                      "value", "budget", "cheap", "affordable", "price", 
+                                                      "cost", "under", "below", "points per", "above", "million",
+                                                      "expensive", "highest price", "costly", "priciest", "costliest"]):
             return {
                 "intent": Intent.HIGH_PERFORMERS,
-                "confidence": 0.75,
-                "reasoning": "Threshold keywords detected",
+                "confidence": 0.85,
+                "reasoning": "Threshold/price keywords detected",
+                "query": query
+            }
+        
+        # SQUAD BUILDING (check before general team analysis)
+        if any(phrase in query_lower for phrase in ["build squad", "build team", "squad under", 
+                                                      "team under", "squad within budget", "team within budget",
+                                                      "best squad", "optimal squad", "optimal team"]):
+            return {
+                "intent": Intent.HIGH_PERFORMERS,
+                "confidence": 0.9,
+                "reasoning": "Squad building keywords detected",
                 "query": query
             }
         

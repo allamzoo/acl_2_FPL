@@ -187,13 +187,15 @@ class BaselineRetriever:
     # Query 5: Gameweek Top Performers
     # =========================================================================
     
-    def get_gameweek_top_performers(self, gameweek: int, season: str, limit: int = 10) -> List[Dict[str, Any]]:
+    def get_gameweek_top_performers(self, gameweek: int, season: str, 
+                                   position: str = None, limit: int = 10) -> List[Dict[str, Any]]:
         """
         Find top performers in a specific gameweek.
         
         Args:
             gameweek: Gameweek number
             season: Season (e.g., "2021-22", "2022-23")
+            position: Optional position filter (FWD, MID, DEF, GK)
             limit: Maximum number of results
             
         Returns:
@@ -203,6 +205,13 @@ class BaselineRetriever:
         MATCH (p:Player)-[played:PLAYED_IN]->(f:Fixture)<-[:HAS_FIXTURE]-(gw:Gameweek)
         WHERE gw.GW_number = $gameweek 
           AND gw.season = $season
+        """
+        
+        # Add position filter if specified
+        if position:
+            query += " AND played.position = $position\n"
+        
+        query += """
         RETURN p.player_name AS player,
                played.position AS position,
                played.total_points AS points,
@@ -214,11 +223,16 @@ class BaselineRetriever:
         LIMIT $limit
         """
         
-        return self._execute_query(query, {
+        params = {
             "gameweek": gameweek,
             "season": season,
             "limit": limit
-        })
+        }
+        
+        if position:
+            params["position"] = position
+        
+        return self._execute_query(query, params)
     
     # =========================================================================
     # Query 6: Compare Two Players
@@ -520,8 +534,8 @@ class BaselineRetriever:
     # =========================================================================
     
     def get_best_value_players(self, position: str, season: str, 
-                               max_price: float = None, min_points: int = 100,
-                               limit: int = 10) -> List[Dict[str, Any]]:
+                               max_price: float = None, min_price: float = None,
+                               min_points: int = 100, limit: int = 10) -> List[Dict[str, Any]]:
         """
         Find best value-for-money players (high points per price ratio).
         
@@ -529,6 +543,7 @@ class BaselineRetriever:
             position: Player position (FWD, MID, DEF, GK)
             season: Season (e.g., "2021-22", "2022-23")
             max_price: Maximum price threshold (e.g., 7.0 for £7.0m)
+            min_price: Minimum price threshold (e.g., 7.0 for £7.0m)
             min_points: Minimum total points threshold
             limit: Maximum number of results
             
@@ -540,9 +555,9 @@ class BaselineRetriever:
         WHERE played.position = $position 
           AND gw.season = $season
           AND played.minutes > 0
-          AND p.value IS NOT NULL
+          AND played.value IS NOT NULL
         WITH p.player_name AS player,
-             p.value AS price,
+             AVG(played.value) / 10.0 AS price,
              played.position AS position,
              SUM(played.total_points) AS total_points,
              SUM(played.goals_scored) AS total_goals,
@@ -551,9 +566,11 @@ class BaselineRetriever:
         WHERE total_points >= $min_points
         """
         
-        # Add price filter if specified
+        # Add price filters if specified
         if max_price is not None:
             query += " AND price <= $max_price\n"
+        if min_price is not None:
+            query += " AND price >= $min_price\n"
         
         query += """
         WITH player, price, position, total_points, total_goals, total_assists, total_minutes,
@@ -573,5 +590,182 @@ class BaselineRetriever:
         
         if max_price is not None:
             params["max_price"] = max_price
+        if min_price is not None:
+            params["min_price"] = min_price
         
         return self._execute_query(query, params)
+    
+    def get_most_expensive_players(self, season: str = "2021-22", position: str = None, 
+                                    limit: int = 10, min_points: int = 0) -> List[Dict]:
+        """
+        Get the most expensive players in a season.
+        
+        Args:
+            season: Season string (e.g., "2021-22")
+            position: Filter by position (optional)
+            limit: Number of players to return
+            min_points: Minimum total points threshold
+            
+        Returns:
+            List of players with price and stats
+        """
+        query = """
+        MATCH (p:Player)-[played:PLAYED_IN]->(f:Fixture)<-[:HAS_FIXTURE]-(gw:Gameweek)
+        WHERE gw.season = $season
+          AND played.minutes > 0
+          AND played.value IS NOT NULL
+        """
+        
+        if position:
+            query += " AND played.position = $position\n"
+        
+        query += """
+        WITH p.player_name AS player,
+             AVG(played.value) / 10.0 AS price,
+             played.position AS position,
+             SUM(played.total_points) AS total_points,
+             SUM(played.goals_scored) AS total_goals,
+             SUM(played.assists) AS total_assists,
+             SUM(played.minutes) AS total_minutes,
+             SUM(played.clean_sheets) AS clean_sheets
+        WHERE total_points >= $min_points
+        WITH player, price, position, total_points, total_goals, total_assists, 
+             total_minutes, clean_sheets
+        ORDER BY price DESC
+        LIMIT $limit
+        RETURN player AS player_name,
+               price,
+               position,
+               total_points,
+               total_goals,
+               total_assists,
+               total_minutes,
+               clean_sheets
+        """
+        
+        params = {
+            "season": season,
+            "limit": limit,
+            "min_points": min_points
+        }
+        
+        if position:
+            params["position"] = position
+        
+        return self._execute_query(query, params)
+    
+    def build_squad_under_budget(self, season: str = "2021-22", budget: float = 100.0,
+                                  min_points: int = 30, min_games: int = 10) -> Dict[str, Any]:
+        """
+        Build an optimal 15-player FPL squad under budget constraint.
+        Squad composition: 2 GK, 5 DEF, 5 MID, 3 FWD
+        Optimization: Maximize value ratio (points per million)
+        
+        Args:
+            season: Season string (e.g., "2021-22")
+            budget: Total budget in millions (default 100.0)
+            min_points: Minimum points threshold (default 30)
+            min_games: Minimum games played (default 10)
+            
+        Returns:
+            Dictionary with squad players and summary stats
+        """
+        # Query to get top value players by position
+        query = """
+        MATCH (p:Player)-[r:PLAYED_IN]->(f:Fixture)<-[:HAS_FIXTURE]-(gw:Gameweek)
+        WHERE r.total_points IS NOT NULL
+          AND r.value IS NOT NULL
+          AND gw.season = $season
+          AND r.minutes > 0
+        WITH p.player_name AS player_name,
+             r.position AS position,
+             SUM(r.total_points) AS total_points,
+             SUM(r.goals_scored) AS goals,
+             SUM(r.assists) AS assists,
+             AVG(r.value) / 10.0 AS price,
+             COUNT(DISTINCT f) AS games_played
+        WHERE total_points >= $min_points
+          AND games_played >= $min_games
+          AND price IS NOT NULL
+        WITH position, player_name, total_points, goals, assists, price,
+             toFloat(total_points) / (price * 10.0) AS value_ratio
+        ORDER BY position, value_ratio DESC
+        
+        WITH position, COLLECT({
+            player: player_name,
+            total_points: total_points,
+            goals: goals,
+            assists: assists,
+            price: price,
+            value_ratio: value_ratio
+        }) AS players_by_position
+        
+        RETURN position, players_by_position
+        """
+        
+        params = {
+            "season": season,
+            "min_points": min_points,
+            "min_games": min_games
+        }
+        
+        results = self._execute_query(query, params)
+        
+        # Organize players by position
+        players_by_pos = {}
+        for record in results:
+            pos = record['position']
+            players = record['players_by_position']
+            players_by_pos[pos] = players
+        
+        # FPL formation requirements
+        formation = {
+            'GK': 2,
+            'DEF': 5,
+            'MID': 5,
+            'FWD': 3
+        }
+        
+        # Greedy selection - pick best value ratio players per position
+        selected_squad = []
+        total_cost = 0.0
+        total_points = 0
+        
+        for pos, count in formation.items():
+            if pos not in players_by_pos:
+                continue
+                
+            available = players_by_pos[pos]
+            selected = 0
+            
+            for player_data in available:
+                if selected >= count:
+                    break
+                    
+                player_price = player_data['price']
+                
+                # Check if adding this player keeps us under budget
+                if total_cost + player_price <= budget:
+                    selected_squad.append({
+                        'player_name': player_data['player'],
+                        'position': pos,
+                        'price': player_price,
+                        'total_points': player_data['total_points'],
+                        'goals': player_data['goals'],
+                        'assists': player_data['assists'],
+                        'value_ratio': player_data['value_ratio']
+                    })
+                    total_cost += player_price
+                    total_points += player_data['total_points']
+                    selected += 1
+        
+        return {
+            'squad': selected_squad,
+            'total_cost': round(total_cost, 1),
+            'remaining_budget': round(budget - total_cost, 1),
+            'total_points': total_points,
+            'squad_size': len(selected_squad),
+            'season': season,
+            'formation': {pos: len([p for p in selected_squad if p['position'] == pos]) 
+                         for pos in formation.keys()}
+        }

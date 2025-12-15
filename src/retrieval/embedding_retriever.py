@@ -451,10 +451,11 @@ class EmbeddingRetriever:
              SUM(r.clean_sheets) AS clean_sheets,
              COUNT(gw) AS games_played,
              SUM(r.minutes) AS total_minutes,
-             AVG(r.ict_index) AS avg_ict_index
+             AVG(r.ict_index) AS avg_ict_index,
+             AVG(r.value) / 10.0 AS price
         RETURN player_name, position, total_goals, total_assists, 
                total_points, bonus_points, clean_sheets, games_played,
-               total_minutes, avg_ict_index
+               total_minutes, avg_ict_index, price
         ORDER BY total_points DESC
         """
         
