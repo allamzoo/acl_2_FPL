@@ -5,6 +5,7 @@ Interactive UI for FPL Graph-RAG system with official FPL theme.
 """
 
 import streamlit as st
+import streamlit.components.v1 as components
 import sys
 from pathlib import Path
 
@@ -72,12 +73,52 @@ FPL_COLORS = {
 def load_custom_css():
     st.markdown(f"""
     <style>
+        /* Hide black header completely */
+        header {{
+            visibility: hidden;
+            height: 0;
+            display: none;
+        }}
+        
+        #MainMenu {{
+            visibility: hidden;
+        }}
+        
+        footer {{
+            visibility: hidden;
+        }}
+        
+        .stDeployButton {{
+            visibility: hidden;
+        }}
+        
+        /* Ensure sidebar is always visible */
+        [data-testid="stSidebar"] {{
+            display: block !important;
+        }}
+        
         /* Global Styles */
         @import url('https://fonts.googleapis.com/css2?family=Karla:wght@400;600;700;800&display=swap');
         
         .stApp {{
             background: linear-gradient(135deg, #1a0020 0%, #37003c 50%, #2d0035 100%);
             font-family: 'Karla', sans-serif;
+        }}
+        
+        /* Ensure main container doesn't add extra padding that prevents full width */
+        section[data-testid="stMain"] {{
+            padding-top: 0;
+        }}
+        
+        section[data-testid="stMain"] > div:first-child {{
+            padding-top: 0;
+        }}
+        
+        /* Main content area */
+        .main .block-container {{
+            padding-top: 1rem;
+            margin-top: 0;
+            max-width: 100%;
         }}
         
         /* Remove global white text override - let specific contexts control their colors */
@@ -93,19 +134,18 @@ def load_custom_css():
             50% {{ transform: scale(1.05); }}
         }}
         
-        /* Header */
+        /* Header - positioned at absolute top */
         .main-header {{
             background: linear-gradient(135deg, #00ffff 0%, #6e3fff 50%, #37003c 100%);
-            padding: 2rem 2rem 3rem 2rem;
-            border-radius: 0 0 20px 20px;
-            margin: -6rem -4rem 2rem -4rem;
+            padding: 0.75rem 1.5rem;
+            margin: -1rem -2rem 1.5rem -2rem;
+            width: calc(100% + 4rem);
             color: white;
             box-shadow: 0 4px 20px rgba(0, 255, 255, 0.3);
-            border-top: 4px solid #00ffff;
         }}
         
         .main-header h1 {{
-            font-size: 2.5rem;
+            font-size: 1.4rem;
             font-weight: 700;
             margin: 0;
             color: white;
@@ -115,11 +155,16 @@ def load_custom_css():
         }}
         
         .main-header p {{
-            font-size: 1.1rem;
-            margin: 0.5rem 0 0 0;
+            font-size: 0.8rem;
+            margin: 0.2rem 0 0 0;
             color: rgba(255, 255, 255, 0.95);
             font-weight: 400;
             text-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+        }}
+        
+        /* Push content below fixed header */
+        [data-testid="stAppViewContainer"] {{
+            padding-top: 0;
         }}
         
         /* Sidebar */
@@ -127,6 +172,41 @@ def load_custom_css():
             background: linear-gradient(180deg, #2d0035 0%, #37003c 50%, #4a0052 100%);
             padding-top: 2rem;
             border-right: 2px solid rgba(0, 255, 255, 0.2);
+            margin-top: 0;
+            transition: margin-left 0.3s ease;
+        }}
+        
+        /* Menu toggle button */
+        .menu-toggle {{
+            position: fixed;
+            left: 1rem;
+            top: 1rem;
+            background: linear-gradient(135deg, rgba(0, 255, 255, 0.3) 0%, rgba(110, 63, 255, 0.3) 100%);
+            border: 2px solid #00ffff;
+            color: white;
+            padding: 0.75rem 1.5rem;
+            border-radius: 12px;
+            cursor: pointer;
+            font-size: 1.1rem;
+            font-weight: 700;
+            transition: all 0.3s ease;
+            z-index: 999999;
+            user-select: none;
+            box-shadow: 0 4px 15px rgba(0, 255, 255, 0.4);
+            backdrop-filter: blur(10px);
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }}
+        
+        .menu-toggle:hover {{
+            background: linear-gradient(135deg, rgba(0, 255, 255, 0.5) 0%, rgba(110, 63, 255, 0.5) 100%);
+            box-shadow: 0 6px 25px rgba(0, 255, 255, 0.6);
+            transform: translateY(-2px);
+        }}
+        
+        .menu-toggle:active {{
+            transform: translateY(0);
+            box-shadow: 0 2px 10px rgba(0, 255, 255, 0.4);
         }}
         
         [data-testid="stSidebar"] .stMarkdown {{
@@ -181,14 +261,38 @@ def load_custom_css():
             margin-bottom: 1rem;
         }}
         
-        .fpl-card p, .fpl-card span, .fpl-card li, .fpl-card div, .fpl-card {{
-            color: rgba(255, 255, 255, 0.95) !important;
-            line-height: 1.6;
-            font-size: 0.95rem;
+        /* Card text - all content white and visible */
+        .fpl-card,
+        .fpl-card p,
+        .fpl-card span,
+        .fpl-card li,
+        .fpl-card div,
+        .fpl-card strong,
+        .fpl-card em,
+        .fpl-card a,
+        .fpl-card ol,
+        .fpl-card ul {{
+            color: #ffffff !important;
+            line-height: 1.7;
+            font-size: 1rem;
+            text-shadow: 0 2px 4px rgba(0, 0, 0, 0.8);
         }}
         
-        .fpl-card *, .fpl-card .stMarkdown, .fpl-card .stMarkdown * {{
-            color: white !important;
+        .fpl-card *,
+        .fpl-card .stMarkdown,
+        .fpl-card .stMarkdown *,
+        .fpl-card > div,
+        .fpl-card > div * {{
+            color: #ffffff !important;
+            text-shadow: 0 2px 4px rgba(0, 0, 0, 0.8);
+        }}
+        
+        /* Override any markdown color styling */
+        .markdown-text-container,
+        .markdown-text-container *,
+        [data-testid="stMarkdownContainer"],
+        [data-testid="stMarkdownContainer"] * {{
+            color: inherit !important;
         }}
         
         .player-card {{
@@ -217,12 +321,14 @@ def load_custom_css():
         }}
         
         .player-card p, .player-card span, .player-card div, .player-card li {{
-            color: rgba(255, 255, 255, 0.9) !important;
-            line-height: 1.5;
+            color: #ffffff !important;
+            line-height: 1.6;
+            text-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
         }}
         
         .player-card *, .player-card .stMarkdown, .player-card .stMarkdown * {{
-            color: white !important;
+            color: #ffffff !important;
+            text-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
         }}
         
         .stat-card {{
@@ -277,38 +383,76 @@ def load_custom_css():
             box-shadow: 0 0 0 3px rgba(0, 255, 255, 0.2);
         }}
         
-        /* Buttons */
-        .stButton > button {{
-            background: white !important;
-            color: #37003c !important;
+        /* Buttons - Cyan-Purple gradient background with white text */
+        .stButton > button,
+        button[kind="primary"],
+        button[kind="secondary"],
+        button[data-testid="baseButton-primary"],
+        button[data-testid="baseButton-secondary"],
+        .stButton button,
+        div[data-testid="column"] button {{
+            background: linear-gradient(135deg, #00ffff 0%, #8000ff 100%) !important;
+            background-color: transparent !important;
+            color: #ffffff !important;
             border: 2px solid #00ffff !important;
-            border-radius: 10px;
-            padding: 0.875rem 2.5rem;
-            font-weight: 700;
-            font-size: 1rem;
+            border-radius: 10px !important;
+            padding: 0.875rem 2.5rem !important;
+            font-weight: 700 !important;
+            font-size: 1rem !important;
             text-transform: uppercase;
             letter-spacing: 1px;
             transition: all 0.3s ease;
-            box-shadow: 0 4px 15px rgba(0, 255, 255, 0.3);
-            position: relative;
-            overflow: hidden;
+            box-shadow: 0 4px 15px rgba(0, 255, 255, 0.3) !important;
         }}
         
-        .stButton > button *, .stButton > button p {{
-            color: #37003c !important;
-            font-weight: 700;
+        /* Button text - force white with maximum specificity */
+        .stButton > button,
+        .stButton > button *,
+        .stButton > button p,
+        .stButton > button div,
+        .stButton > button span,
+        .stButton button,
+        .stButton button *,
+        button[kind="primary"],
+        button[kind="primary"] *,
+        button[kind="secondary"],
+        button[kind="secondary"] *,
+        button[data-testid="baseButton-primary"],
+        button[data-testid="baseButton-primary"] *,
+        button[data-testid="baseButton-secondary"],
+        button[data-testid="baseButton-secondary"] *,
+        div[data-testid="column"] button,
+        div[data-testid="column"] button *,
+        div[data-testid="column"] button p {{
+            color: #ffffff !important;
+            font-weight: 700 !important;
         }}
         
-        .stButton > button:hover {{
-            transform: translateY(-3px);
-            box-shadow: 0 8px 25px rgba(0, 255, 255, 0.5);
-            background: linear-gradient(135deg, #00ffff 0%, #8000ff 100%) !important;
-            color: white !important;
-            animation: pulse 0.6s ease;
+        /* Button hover state - brighter gradient and lift */
+        .stButton > button:hover,
+        button[kind="primary"]:hover,
+        button[kind="secondary"]:hover,
+        div[data-testid="column"] button:hover {{
+            transform: translateY(-3px) !important;
+            box-shadow: 0 8px 25px rgba(0, 255, 255, 0.6) !important;
+            background: linear-gradient(135deg, #00ffff 0%, #a020ff 100%) !important;
+            border-color: #00ffff !important;
         }}
         
-        .stButton > button:hover *, .stButton > button:hover p {{
-            color: white !important;
+        /* Button hover text - keep white */
+        .stButton > button:hover,
+        .stButton > button:hover *,
+        .stButton > button:hover p,
+        .stButton > button:hover div,
+        .stButton > button:hover span,
+        button[kind="primary"]:hover,
+        button[kind="primary"]:hover *,
+        button[kind="secondary"]:hover,
+        button[kind="secondary"]:hover *,
+        div[data-testid="column"] button:hover,
+        div[data-testid="column"] button:hover * {{
+            color: #ffffff !important;
+            font-weight: 700 !important;
         }}
         
         .stButton > button:active {{
@@ -384,22 +528,28 @@ def load_custom_css():
         div[data-testid="stVerticalBlock"] > div > div > h2,
         div[data-testid="stVerticalBlock"] > div > div > h3,
         div[data-testid="stVerticalBlock"] > div > div > label {{
-            color: white !important;
-            text-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+            color: #ffffff !important;
+            text-shadow: 0 2px 4px rgba(0, 0, 0, 0.8);
         }}
         
-        /* Text inside cards should be dark */
+        /* Text inside cards should be WHITE not dark */
         div[data-testid="stVerticalBlock"] .fpl-card p,
         div[data-testid="stVerticalBlock"] .fpl-card li,
         div[data-testid="stVerticalBlock"] .fpl-card span,
-        div[data-testid="stVerticalBlock"] .fpl-card div {{
-            color: #2d2d2d !important;
+        div[data-testid="stVerticalBlock"] .fpl-card div,
+        div[data-testid="stVerticalBlock"] .response-container p,
+        div[data-testid="stVerticalBlock"] .response-container li,
+        div[data-testid="stVerticalBlock"] .response-container span,
+        div[data-testid="stVerticalBlock"] .response-container div {{
+            color: #ffffff !important;
+            text-shadow: 0 2px 4px rgba(0, 0, 0, 0.8);
         }}
         
         div[data-testid="stVerticalBlock"] .fpl-card h1,
         div[data-testid="stVerticalBlock"] .fpl-card h2,
         div[data-testid="stVerticalBlock"] .fpl-card h3 {{
-            color: {FPL_COLORS['primary']} !important;
+            color: #00ffff !important;
+            text-shadow: 0 0 15px rgba(0, 255, 255, 0.6);
         }}
         
         /* Loading spinner */
@@ -657,12 +807,220 @@ def get_database_stats():
 
 def render_header():
     """Render the main header."""
-    st.markdown("""
-    <div class="main-header">
-        <h1>⚽ FPL Knowledge Graph Assistant</h1>
-        <p>Ask questions about Premier League players, teams, and statistics</p>
+    # Load and encode the PL logo
+    import base64
+    from pathlib import Path
+    
+    logo_path = Path(__file__).parent.parent.parent / "assets" / "fpl-logg.png"
+    
+    # Try to read the logo, fallback to emoji if file doesn't exist
+    try:
+        with open(logo_path, "rb") as f:
+            logo_bytes = f.read()
+        # Encode to base64 for embedding
+        logo_base64 = base64.b64encode(logo_bytes).decode()
+        logo_html = f'<img src="data:image/png;base64,{logo_base64}" style="width: 140px; height: 140px; margin-right: 1.5rem; vertical-align: middle; background: transparent !important; mix-blend-mode: multiply; filter: drop-shadow(0 6px 20px rgba(0, 255, 255, 0.5)) contrast(1.2);"/>'
+    except:
+        # Fallback also uses the logo if available, otherwise empty
+        logo_html = ''
+    
+    # Main header
+    st.markdown(f"""
+    <div style="
+        background: linear-gradient(135deg, #00ffff 0%, #6e3fff 50%, #37003c 100%);
+        padding: 0.75rem 1.5rem;
+        margin: -1rem -2rem 1.5rem -2rem;
+        width: calc(100% + 4rem);
+        color: white;
+        box-shadow: 0 4px 20px rgba(0, 255, 255, 0.3);
+    ">
+        <h1 style="
+            font-size: 1.4rem;
+            font-weight: 700;
+            margin: 0;
+            color: white;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            text-shadow: 0 0 20px rgba(0, 255, 255, 0.4), 0 4px 8px rgba(0, 0, 0, 0.5);
+        ">{logo_html} FPL KNOWLEDGE GRAPH ASSISTANT</h1>
+        <p style="
+            font-size: 0.8rem;
+            margin: 0.2rem 0 0 0;
+            color: rgba(255, 255, 255, 0.95);
+            font-weight: 400;
+            text-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+        ">Ask questions about Premier League players, teams, and statistics</p>
     </div>
     """, unsafe_allow_html=True)
+
+
+def render_top_stats_cards():
+    """Render cards showing top players for goals, clean sheets, and points."""
+    try:
+        driver = get_neo4j_driver()
+        
+        # Query for top stats
+        with driver.session(database=NEO4J_DATABASE) as session:
+            # Top scorer - sum all goals across fixtures for 2022-23 season
+            top_scorer_result = session.run("""
+                MATCH (p:Player)-[r:PLAYED_IN]->(f:Fixture)
+                WHERE f.season = '2022-23'
+                WITH p, SUM(r.goals_scored) as total_goals
+                WHERE total_goals > 0
+                RETURN p.player_name as name, total_goals as goals
+                ORDER BY total_goals DESC
+                LIMIT 1
+            """).single()
+            
+            # Top clean sheets - GOALKEEPERS ONLY, sum across fixtures for 2022-23
+            top_cs_result = session.run("""
+                MATCH (p:Player)-[r:PLAYED_IN]->(f:Fixture)
+                WHERE f.season = '2022-23' AND r.position = 'GK'
+                WITH p, SUM(r.clean_sheets) as total_cs
+                WHERE total_cs > 0
+                RETURN p.player_name as name, total_cs as clean_sheets
+                ORDER BY total_cs DESC
+                LIMIT 1
+            """).single()
+            
+            # Top points - sum all points across fixtures for 2022-23 season
+            top_points_result = session.run("""
+                MATCH (p:Player)-[r:PLAYED_IN]->(f:Fixture)
+                WHERE f.season = '2022-23'
+                WITH p, SUM(r.total_points) as total_pts
+                WHERE total_pts > 0
+                RETURN p.player_name as name, total_pts as points
+                ORDER BY total_pts DESC
+                LIMIT 1
+            """).single()
+    except Exception as e:
+        st.error(f"Unable to load season leaders: {str(e)}")
+        return
+    
+    # Render cards
+    st.markdown("""
+    <style>
+        .stat-leader-card {
+            background: linear-gradient(135deg, rgba(55, 0, 60, 0.9) 0%, rgba(74, 0, 82, 0.9) 100%);
+            border-radius: 16px;
+            padding: 1.5rem;
+            text-align: center;
+            border: 1px solid rgba(0, 255, 255, 0.3);
+            border-left: 4px solid #00ffff;
+            box-shadow: 0 4px 15px rgba(0, 255, 255, 0.2);
+            transition: all 0.3s ease;
+        }
+        
+        .stat-leader-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 8px 25px rgba(0, 255, 255, 0.4);
+        }
+        
+        .stat-leader-title {
+            color: rgba(255, 255, 255, 0.7);
+            font-size: 0.9rem;
+            margin-bottom: 0.5rem;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+        
+        .stat-leader-name {
+            color: #ffffff;
+            font-size: 1.8rem;
+            font-weight: 700;
+            margin: 0.5rem 0;
+            text-shadow: 0 2px 4px rgba(0, 0, 0, 0.8);
+        }
+        
+        .stat-leader-value {
+            color: #00ffff;
+            font-size: 2.5rem;
+            font-weight: 800;
+            text-shadow: 0 0 20px rgba(0, 255, 255, 0.6);
+        }
+        
+        .stat-leader-photo {
+            width: 80px;
+            height: 80px;
+            border-radius: 50%;
+            margin: 0 auto 1rem;
+            border: 3px solid #00ffff;
+            box-shadow: 0 0 15px rgba(0, 255, 255, 0.5);
+        }
+    </style>
+    """, unsafe_allow_html=True)
+    
+    st.markdown("### 🏆 Season Leaders")
+    
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        if top_scorer_result and top_scorer_result.get('name'):
+            player_name = top_scorer_result['name']
+            goals = top_scorer_result['goals']
+            photo_url = find_player_photo(player_name)
+            
+            st.markdown(f"""
+            <div class="stat-leader-card">
+                <div class="stat-leader-title">⚽ Most Goals</div>
+                <img src="{photo_url}" class="stat-leader-photo" onerror="this.src='https://via.placeholder.com/80/37003c/00ffff?text={get_player_initials(player_name)}'"/>
+                <div class="stat-leader-name">{player_name}</div>
+                <div class="stat-leader-value">{int(goals)}</div>
+            </div>
+            """, unsafe_allow_html=True)
+        else:
+            st.markdown("""
+            <div class="stat-leader-card">
+                <div class="stat-leader-title">⚽ Most Goals</div>
+                <div class="stat-leader-name">No Data</div>
+            </div>
+            """, unsafe_allow_html=True)
+    
+    with col2:
+        if top_cs_result and top_cs_result.get('name'):
+            player_name = top_cs_result['name']
+            clean_sheets = top_cs_result['clean_sheets']
+            photo_url = find_player_photo(player_name)
+            
+            st.markdown(f"""
+            <div class="stat-leader-card">
+                <div class="stat-leader-title">🧤 Most Clean Sheets</div>
+                <img src="{photo_url}" class="stat-leader-photo" onerror="this.src='https://via.placeholder.com/80/37003c/00ffff?text={get_player_initials(player_name)}'"/>
+                <div class="stat-leader-name">{player_name}</div>
+                <div class="stat-leader-value">{int(clean_sheets)}</div>
+            </div>
+            """, unsafe_allow_html=True)
+        else:
+            st.markdown("""
+            <div class="stat-leader-card">
+                <div class="stat-leader-title">🧤 Most Clean Sheets</div>
+                <div class="stat-leader-name">No Data</div>
+            </div>
+            """, unsafe_allow_html=True)
+    
+    with col3:
+        if top_points_result and top_points_result.get('name'):
+            player_name = top_points_result['name']
+            points = top_points_result['points']
+            photo_url = find_player_photo(player_name)
+            
+            st.markdown(f"""
+            <div class="stat-leader-card">
+                <div class="stat-leader-title">⭐ Most Points</div>
+                <img src="{photo_url}" class="stat-leader-photo" onerror="this.src='https://via.placeholder.com/80/37003c/00ffff?text={get_player_initials(player_name)}'"/>
+                <div class="stat-leader-name">{player_name}</div>
+                <div class="stat-leader-value">{int(points)}</div>
+            </div>
+            """, unsafe_allow_html=True)
+        else:
+            st.markdown("""
+            <div class="stat-leader-card">
+                <div class="stat-leader-title">⭐ Most Points</div>
+                <div class="stat-leader-name">No Data</div>
+            </div>
+            """, unsafe_allow_html=True)
+    
+    st.markdown("<br/>", unsafe_allow_html=True)
 
 
 def render_sidebar():
@@ -1007,9 +1365,27 @@ def render_results(results: dict, config: dict):
     season = results.get('season', '2022-23')
     st.markdown(f"<span style='background: linear-gradient(135deg, #37003c 0%, #580064 100%); color: white; padding: 0.25rem 0.75rem; border-radius: 20px; font-size: 0.85rem; font-weight: 600;'>📅 {season}</span>", unsafe_allow_html=True)
     
+    # Render response inside a styled card - all in one markdown call
+    response_text = results['response'].replace('\n', '<br/>')
+    
     st.markdown(f"""
-    <div class="fpl-card">
-        {results['response']}
+    <div style="
+        background: linear-gradient(135deg, rgba(55, 0, 60, 0.95) 0%, rgba(45, 0, 53, 0.95) 100%);
+        padding: 2rem;
+        border-radius: 16px;
+        border-left: 4px solid #00ffff;
+        box-shadow: 0 4px 20px rgba(0, 255, 255, 0.2);
+        margin: 1rem 0;
+        border: 1px solid rgba(0, 255, 255, 0.3);
+    ">
+        <div style="
+            color: #ffffff !important;
+            line-height: 1.8;
+            font-size: 1.05rem;
+            text-shadow: 0 2px 4px rgba(0, 0, 0, 0.8);
+        ">
+            {response_text}
+        </div>
     </div>
     """, unsafe_allow_html=True)
     
@@ -1301,7 +1677,7 @@ def main():
     # Page config
     st.set_page_config(
         page_title="FPL Knowledge Graph Assistant",
-        page_icon="⚽",
+        page_icon="https://www.premierleague.com/resources/rebrand/v7.129.2/i/elements/pl-main-logo.png",
         layout="wide",
         initial_sidebar_state="expanded"
     )
@@ -1314,6 +1690,9 @@ def main():
     
     # Render header
     render_header()
+    
+    # Render top stats cards
+    render_top_stats_cards()
     
     # Render sidebar and get config
     config = render_sidebar()
