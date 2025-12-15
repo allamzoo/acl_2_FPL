@@ -108,7 +108,7 @@ class FPLAnswerGenerator:
         season: str = "2022-23",
         model: Optional[str] = None,
         task_type: str = "answer",
-        max_tokens: int = 512,
+        max_tokens: int = 1024,  # Increased default from 512 to 1024
         temperature: float = 0.3,
         retrieval_mode: str = "baseline+embedding1"
     ) -> Dict[str, Any]:

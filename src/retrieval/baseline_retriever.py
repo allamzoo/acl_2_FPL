@@ -167,14 +167,18 @@ class BaselineRetriever:
             List of players with their stats
         """
         query = """
-        MATCH (p:Player)-[:PLAYS_FOR]->(t:Team)
-        MATCH (p)-[played:PLAYED_IN]->(f:Fixture)<-[:HAS_FIXTURE]-(gw:Gameweek)
-        WHERE t.name = $team_name 
-          AND gw.season = $season
-        WITH p.player_name AS player, 
-             played.position AS position,
-             SUM(played.total_points) AS total_points
-        RETURN player, position, total_points
+        MATCH (p:Player)-[played:PLAYED_IN]->(f:Fixture)<-[:HAS_FIXTURE]-(gw:Gameweek),
+              (f)-[:HAS_HOME_TEAM|HAS_AWAY_TEAM]->(t:Team)
+        WHERE gw.season = $season AND t.name = $team_name
+        WITH p, played.position AS position,
+             SUM(played.total_points) AS total_points,
+             SUM(played.goals_scored) AS goals,
+             SUM(played.assists) AS assists,
+             COUNT(DISTINCT f) AS games_played,
+             SUM(played.minutes) AS total_minutes
+        WHERE games_played >= 3
+        WITH p.player_name AS player, position, total_points, goals, assists, games_played, total_minutes
+        RETURN player, position, total_points, goals, assists, games_played, total_minutes
         ORDER BY total_points DESC
         """
         

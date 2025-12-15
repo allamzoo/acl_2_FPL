@@ -296,12 +296,19 @@ class SimpleIntentClassifier:
                 "query": query
             }
         
-        # TEAM_ANALYSIS
-        if any(phrase in query_lower for phrase in ["team", "club", "squad", "roster"]):
+        # TEAM_ANALYSIS (check for team names or team keywords)
+        # Common FPL team names
+        team_keywords = ["arsenal", "liverpool", "chelsea", "man city", "manchester city", 
+                        "man utd", "manchester united", "tottenham", "spurs", "leicester",
+                        "west ham", "everton", "newcastle", "wolves", "brighton", "southampton",
+                        "crystal palace", "brentford", "aston villa", "leeds", "burnley", "watford",
+                        "norwich", "fulham", "bournemouth", "team", "club", "squad", "roster"]
+        
+        if any(phrase in query_lower for phrase in team_keywords):
             return {
                 "intent": Intent.TEAM_ANALYSIS,
-                "confidence": 0.8,
-                "reasoning": "Team keywords detected",
+                "confidence": 0.85,
+                "reasoning": "Team keywords or team name detected",
                 "query": query
             }
         

@@ -1,0 +1,418 @@
+[
+  {
+    "query": "best arsenal midfielders",
+    "query_type": "team_position",
+    "season": "2021-22",
+    "model": "all-mpnet-base-v2",
+    "expected_players": [
+      "Bukayo Saka",
+      "Martin Ødegaard",
+      "Emile Smith Rowe"
+    ],
+    "retrieved_players": [
+      "Diogo Jota",
+      "Sadio Mané",
+      "Mason Mount",
+      "Heung-Min Son",
+      "Dejan Kulusevski",
+      "Mohamed Salah",
+      "Raheem Sterling",
+      "Bukayo Saka",
+      "Kevin De Bruyne",
+      "Bruno Miguel Borges Fernandes"
+    ],
+    "retrieved_count": 10,
+    "precision": 0.1,
+    "recall": 0.333,
+    "f1_score": 0.154,
+    "true_positives": 1,
+    "avg_similarity": 0.744,
+    "max_similarity": 0.753,
+    "min_similarity": 0.733,
+    "response_time_sec": 1.559,
+    "top_3_players": [
+      "Diogo Jota",
+      "Sadio Mané",
+      "Mason Mount"
+    ],
+    "top_3_scores": [
+      0.7533925525078848,
+      0.7510157716284476,
+      0.7508119689532986
+    ]
+  },
+  {
+    "query": "top liverpool defenders",
+    "query_type": "team_position",
+    "season": "2022-23",
+    "model": "all-mpnet-base-v2",
+    "expected_players": [
+      "Trent Alexander-Arnold",
+      "Virgil van Dijk",
+      "Andrew Robertson"
+    ],
+    "retrieved_players": [
+      "Trent Alexander-Arnold",
+      "Andrew Robertson",
+      "John Stones",
+      "Virgil van Dijk",
+      "Reece James",
+      "Joel Matip",
+      "Aymeric Laporte",
+      "Marcos Alonso"
+    ],
+    "retrieved_count": 8,
+    "precision": 0.375,
+    "recall": 1.0,
+    "f1_score": 0.545,
+    "true_positives": 3,
+    "avg_similarity": 0.714,
+    "max_similarity": 0.784,
+    "min_similarity": 0.675,
+    "response_time_sec": 0.648,
+    "top_3_players": [
+      "Trent Alexander-Arnold",
+      "Andrew Robertson",
+      "John Stones"
+    ],
+    "top_3_scores": [
+      0.7844015916244895,
+      0.7667549609087347,
+      0.7247480901043373
+    ]
+  },
+  {
+    "query": "best value midfielders",
+    "query_type": "value_semantic",
+    "season": "2021-22",
+    "model": "all-mpnet-base-v2",
+    "expected_players": [
+      "Bukayo Saka",
+      "Conor Gallagher",
+      "James Maddison"
+    ],
+    "retrieved_players": [
+      "Diogo Jota",
+      "Sadio Mané",
+      "Mason Mount",
+      "Raheem Sterling",
+      "Heung-Min Son",
+      "Bruno Miguel Borges Fernandes",
+      "Dejan Kulusevski",
+      "Kevin De Bruyne",
+      "Bukayo Saka",
+      "Mohamed Salah"
+    ],
+    "retrieved_count": 10,
+    "precision": 0.1,
+    "recall": 0.333,
+    "f1_score": 0.154,
+    "true_positives": 1,
+    "avg_similarity": 0.798,
+    "max_similarity": 0.82,
+    "min_similarity": 0.785,
+    "response_time_sec": 0.791,
+    "top_3_players": [
+      "Diogo Jota",
+      "Sadio Mané",
+      "Mason Mount"
+    ],
+    "top_3_scores": [
+      0.8204255490577319,
+      0.8151951061571767,
+      0.804816623962986
+    ]
+  },
+  {
+    "query": "high scoring forwards",
+    "query_type": "semantic_position",
+    "season": "2021-22",
+    "model": "all-mpnet-base-v2",
+    "expected_players": [
+      "Mohamed Salah",
+      "Heung-Min Son",
+      "Cristiano Ronaldo"
+    ],
+    "retrieved_players": [
+      "Harry Kane",
+      "John Stones",
+      "Cristiano Ronaldo dos Santos Aveiro",
+      "Michail Antonio",
+      "Ivan Toney",
+      "Ollie Watkins",
+      "Teemu Pukki",
+      "Emmanuel Dennis",
+      "Richarlison de Andrade",
+      "Gabriel Fernando de Jesus"
+    ],
+    "retrieved_count": 10,
+    "precision": 0.0,
+    "recall": 0.0,
+    "f1_score": 0,
+    "true_positives": 0,
+    "avg_similarity": 0.691,
+    "max_similarity": 0.767,
+    "min_similarity": 0.639,
+    "response_time_sec": 0.592,
+    "top_3_players": [
+      "Harry Kane",
+      "John Stones",
+      "Cristiano Ronaldo dos Santos Aveiro"
+    ],
+    "top_3_scores": [
+      0.767027271970061,
+      0.7544730274109597,
+      0.7463087754200098
+    ]
+  },
+  {
+    "query": "defensive midfielders with good passing",
+    "query_type": "complex_semantic",
+    "season": "2021-22",
+    "model": "all-mpnet-base-v2",
+    "expected_players": [
+      "Rodri",
+      "Fabinho",
+      "Thiago Alcántara"
+    ],
+    "retrieved_players": [
+      "João Pedro Cavaco Cancelo",
+      "Aymeric Laporte",
+      "Trent Alexander-Arnold",
+      "Virgil van Dijk",
+      "Andrew Robertson",
+      "Joel Matip",
+      "Eric Dier",
+      "Antonio Rüdiger",
+      "Rúben Santos Gato Alves Dias",
+      "Ben White"
+    ],
+    "retrieved_count": 10,
+    "precision": 0.0,
+    "recall": 0.0,
+    "f1_score": 0,
+    "true_positives": 0,
+    "avg_similarity": 0.745,
+    "max_similarity": 0.793,
+    "min_similarity": 0.674,
+    "response_time_sec": 0.561,
+    "top_3_players": [
+      "João Pedro Cavaco Cancelo",
+      "Aymeric Laporte",
+      "Trent Alexander-Arnold"
+    ],
+    "top_3_scores": [
+      0.7927070615797105,
+      0.7814132042130508,
+      0.7755443063420204
+    ]
+  },
+  {
+    "query": "best arsenal midfielders",
+    "query_type": "team_position",
+    "season": "2021-22",
+    "model": "all-MiniLM-L6-v2",
+    "expected_players": [
+      "Bukayo Saka",
+      "Martin Ødegaard",
+      "Emile Smith Rowe"
+    ],
+    "retrieved_players": [
+      "Kevin De Bruyne",
+      "Dejan Kulusevski",
+      "Bukayo Saka",
+      "Daniel James",
+      "James Ward-Prowse",
+      "Jack Harrison",
+      "Mohamed Salah",
+      "Heung-Min Son",
+      "Philippe Coutinho Correia",
+      "Philippe Coutinho Correia"
+    ],
+    "retrieved_count": 10,
+    "precision": 0.111,
+    "recall": 0.333,
+    "f1_score": 0.167,
+    "true_positives": 1,
+    "avg_similarity": 0.693,
+    "max_similarity": 0.726,
+    "min_similarity": 0.663,
+    "response_time_sec": 0.805,
+    "top_3_players": [
+      "Kevin De Bruyne",
+      "Dejan Kulusevski",
+      "Bukayo Saka"
+    ],
+    "top_3_scores": [
+      0.7256955250360432,
+      0.718471278565981,
+      0.7119347502826604
+    ]
+  },
+  {
+    "query": "top liverpool defenders",
+    "query_type": "team_position",
+    "season": "2022-23",
+    "model": "all-MiniLM-L6-v2",
+    "expected_players": [
+      "Trent Alexander-Arnold",
+      "Virgil van Dijk",
+      "Andrew Robertson"
+    ],
+    "retrieved_players": [
+      "Virgil van Dijk",
+      "Trent Alexander-Arnold",
+      "Joel Matip",
+      "Virgil van Dijk",
+      "Joel Matip",
+      "Andrew Robertson",
+      "Aymeric Laporte",
+      "Kieran Trippier",
+      "Daniel Amartey"
+    ],
+    "retrieved_count": 9,
+    "precision": 0.429,
+    "recall": 1.0,
+    "f1_score": 0.6,
+    "true_positives": 3,
+    "avg_similarity": 0.648,
+    "max_similarity": 0.674,
+    "min_similarity": 0.615,
+    "response_time_sec": 0.431,
+    "top_3_players": [
+      "Virgil van Dijk",
+      "Trent Alexander-Arnold",
+      "Joel Matip"
+    ],
+    "top_3_scores": [
+      0.6701549013743762,
+      0.6740912324321305,
+      0.6496129086228506
+    ]
+  },
+  {
+    "query": "best value midfielders",
+    "query_type": "value_semantic",
+    "season": "2021-22",
+    "model": "all-MiniLM-L6-v2",
+    "expected_players": [
+      "Bukayo Saka",
+      "Conor Gallagher",
+      "James Maddison"
+    ],
+    "retrieved_players": [
+      "Kevin De Bruyne",
+      "Bukayo Saka",
+      "Dejan Kulusevski",
+      "James Ward-Prowse",
+      "Philippe Coutinho Correia",
+      "Bruno Guimarães Rodriguez Moura",
+      "Daniel James",
+      "Heung-Min Son",
+      "Kevin De Bruyne",
+      "Dejan Kulusevski"
+    ],
+    "retrieved_count": 10,
+    "precision": 0.125,
+    "recall": 0.333,
+    "f1_score": 0.182,
+    "true_positives": 1,
+    "avg_similarity": 0.706,
+    "max_similarity": 0.784,
+    "min_similarity": 0.673,
+    "response_time_sec": 0.481,
+    "top_3_players": [
+      "Kevin De Bruyne",
+      "Bukayo Saka",
+      "Dejan Kulusevski"
+    ],
+    "top_3_scores": [
+      0.6816019930775554,
+      0.7838826411427242,
+      0.672975972466373
+    ]
+  },
+  {
+    "query": "high scoring forwards",
+    "query_type": "semantic_position",
+    "season": "2021-22",
+    "model": "all-MiniLM-L6-v2",
+    "expected_players": [
+      "Mohamed Salah",
+      "Heung-Min Son",
+      "Cristiano Ronaldo"
+    ],
+    "retrieved_players": [
+      "Harry Kane",
+      "John Stones",
+      "Wout Weghorst",
+      "Harry Kane",
+      "Jamie Vardy",
+      "Richarlison de Andrade",
+      "Gabriel Fernando de Jesus",
+      "Kelechi Iheanacho",
+      "Cristiano Ronaldo dos Santos Aveiro",
+      "Bryan Mbeumo"
+    ],
+    "retrieved_count": 10,
+    "precision": 0.0,
+    "recall": 0.0,
+    "f1_score": 0,
+    "true_positives": 0,
+    "avg_similarity": 0.67,
+    "max_similarity": 0.729,
+    "min_similarity": 0.619,
+    "response_time_sec": 0.345,
+    "top_3_players": [
+      "Harry Kane",
+      "John Stones",
+      "Wout Weghorst"
+    ],
+    "top_3_scores": [
+      0.6832118946331198,
+      0.7291913716237265,
+      0.7266618098494291
+    ]
+  },
+  {
+    "query": "defensive midfielders with good passing",
+    "query_type": "complex_semantic",
+    "season": "2021-22",
+    "model": "all-MiniLM-L6-v2",
+    "expected_players": [
+      "Rodri",
+      "Fabinho",
+      "Thiago Alcántara"
+    ],
+    "retrieved_players": [
+      "Virgil van Dijk",
+      "Joel Matip",
+      "Aaron Wan-Bissaka",
+      "Trent Alexander-Arnold",
+      "Andrew Robertson",
+      "Marc Guéhi",
+      "Kieran Tierney",
+      "Lucas Digne",
+      "João Pedro Cavaco Cancelo"
+    ],
+    "retrieved_count": 9,
+    "precision": 0.0,
+    "recall": 0.0,
+    "f1_score": 0,
+    "true_positives": 0,
+    "avg_similarity": 0.662,
+    "max_similarity": 0.777,
+    "min_similarity": 0.592,
+    "response_time_sec": 0.417,
+    "top_3_players": [
+      "Virgil van Dijk",
+      "Joel Matip",
+      "Aaron Wan-Bissaka"
+    ],
+    "top_3_scores": [
+      0.7770754886608582,
+      0.7475761627792292,
+      0.6995244719602784
+    ]
+  }
+]

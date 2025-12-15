@@ -295,9 +295,29 @@ class HybridRetriever:
         positions = entities.get('positions', [])
         position = positions[0] if positions else None
         
+        # Extract team from entities
+        team_names = entities.get('team_names', [])
+        team_name = team_names[0] if team_names else None
+        
         # Extract gameweek if mentioned
         gameweeks = entities.get('gameweeks', [])
         gameweek = gameweeks[0] if gameweeks else None
+        
+        # Team + Position queries (e.g., "best arsenal midfielders")
+        if team_name and position:
+            logger.info(f"Team+Position query detected: {team_name} {position}")
+            team_players = self.baseline.get_team_players(team_name, season)
+            # Filter by position
+            filtered_players = [p for p in team_players if p.get('position') == position]
+            context['baseline_results']['team_players'] = filtered_players
+            return context
+        
+        # Team-only queries (already handled in _retrieve_baseline_specific, but as backup)
+        elif team_name and not position:
+            logger.info(f"Team-only query detected: {team_name}")
+            team_players = self.baseline.get_team_players(team_name, season)
+            context['baseline_results']['team_players'] = team_players
+            return context
         
         # Squad building queries - check FIRST before other price/budget queries
         if any(keyword in query_lower for keyword in ['build squad', 'build team', 'optimal squad', 
