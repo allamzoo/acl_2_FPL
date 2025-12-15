@@ -238,7 +238,7 @@ class EntityExtractor:
     
     def extract_seasons(self, query: str) -> List[str]:
         """
-        Extract seasons from query (e.g., "2021-22", "2022-23").
+        Extract seasons from query (e.g., "2021-22", "2022-23", "2022/2023").
         
         Args:
             query: User query
@@ -248,24 +248,29 @@ class EntityExtractor:
         """
         seasons = []
         
-        # Pattern: 2021-22, 2022-23, etc.
-        pattern = r'\b(20\d{2})[-/](\d{2})\b'
-        matches = re.finditer(pattern, query)
-        
-        for match in matches:
-            season = f"{match.group(1)}-{match.group(2)}"
-            seasons.append(season)
-        
-        # Pattern: 2021/22, 2022/23
-        for match in re.finditer(r'\b(20\d{2})/(\d{2})\b', query):
-            season = f"{match.group(1)}-{match.group(2)}"
+        # Pattern 1: 2022/2023 (full year format) - convert to short format
+        pattern_full = r'\b(20\d{2})[/-](20\d{2})\b'
+        for match in re.finditer(pattern_full, query):
+            year1 = match.group(1)
+            year2 = match.group(2)
+            # Convert to short format: 2022/2023 -> 2022-23
+            season = f"{year1}-{year2[-2:]}"
             if season not in seasons:
                 seasons.append(season)
+        
+        # Pattern 2: 2021-22, 2022-23, etc. (short format)
+        pattern_short = r'\b(20\d{2})[-/](\d{2})\b'
+        for match in re.finditer(pattern_short, query):
+            # Skip if already matched by full pattern
+            if not re.match(r'20\d{2}', match.group(2)):
+                season = f"{match.group(1)}-{match.group(2)}"
+                if season not in seasons:
+                    seasons.append(season)
         
         # If no season found, return most recent season as default
         if not seasons:
             # Could be made configurable
-            seasons = ["2021-22"]  # Default season
+            seasons = ["2022-23"]  # Default season (updated to latest available)
         
         return seasons
     
