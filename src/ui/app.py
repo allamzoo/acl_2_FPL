@@ -24,16 +24,41 @@ from config.config import NEO4J_URI, NEO4J_USERNAME, NEO4J_PASSWORD, NEO4J_DATAB
 from neo4j import GraphDatabase
 import time
 import logging
+import pandas as pd
+import json
+
+# Import player photos module
+from src.ui.player_photos import (
+    find_player_photo, 
+    extract_player_names_from_response, 
+    get_player_initials
+)
+
+# Import new visualization components
+from src.ui.graph_viz import render_graph, create_network_graph
+from src.ui.stats_viz import (
+    create_player_stats_radar,
+    create_player_comparison_chart,
+    create_performance_timeline,
+    create_position_distribution,
+    create_multi_metric_comparison,
+    create_value_analysis_scatter
+)
+from src.ui.player_comparison import render_player_comparison_ui, compare_players
+from src.ui.live_dashboard import render_live_dashboard
 
 logger = logging.getLogger(__name__)
 
 
-# FPL Official Color Scheme
+# FPL Official Color Scheme (Matching Official Website)
 FPL_COLORS = {
     'primary': '#37003c',      # Deep purple (main brand color)
     'secondary': '#00ff87',    # Bright cyan/green
     'accent': '#e90052',       # Pink/magenta
-    'background': '#f7f7f7',   # Light grey
+    'cyan': '#00ffff',         # Pure cyan (gradient start)
+    'purple_light': '#8000ff', # Purple gradient end
+    'purple_dark': '#37003c',  # Dark purple
+    'background': '#2d0035',   # Dark purple background
     'card': '#ffffff',         # White
     'text': '#37003c',         # Deep purple text
     'text_light': '#6c757d',   # Grey text
@@ -51,7 +76,7 @@ def load_custom_css():
         @import url('https://fonts.googleapis.com/css2?family=Karla:wght@400;600;700;800&display=swap');
         
         .stApp {{
-            background: linear-gradient(135deg, {FPL_COLORS['primary']} 0%, #580064 100%);
+            background: linear-gradient(135deg, #1a0020 0%, #37003c 50%, #2d0035 100%);
             font-family: 'Karla', sans-serif;
         }}
         
@@ -70,12 +95,13 @@ def load_custom_css():
         
         /* Header */
         .main-header {{
-            background: linear-gradient(135deg, {FPL_COLORS['primary']} 0%, #580064 100%);
+            background: linear-gradient(135deg, #00ffff 0%, #6e3fff 50%, #37003c 100%);
             padding: 2rem 2rem 3rem 2rem;
             border-radius: 0 0 20px 20px;
             margin: -6rem -4rem 2rem -4rem;
             color: white;
-            box-shadow: 0 4px 20px rgba(55, 0, 60, 0.3);
+            box-shadow: 0 4px 20px rgba(0, 255, 255, 0.3);
+            border-top: 4px solid #00ffff;
         }}
         
         .main-header h1 {{
@@ -85,34 +111,38 @@ def load_custom_css():
             color: white;
             text-transform: uppercase;
             letter-spacing: 1px;
+            text-shadow: 0 0 20px rgba(0, 255, 255, 0.4), 0 4px 8px rgba(0, 0, 0, 0.5);
         }}
         
         .main-header p {{
             font-size: 1.1rem;
             margin: 0.5rem 0 0 0;
-            color: {FPL_COLORS['secondary']};
+            color: rgba(255, 255, 255, 0.95);
             font-weight: 400;
+            text-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
         }}
         
         /* Sidebar */
         [data-testid="stSidebar"] {{
-            background: linear-gradient(180deg, {FPL_COLORS['primary']} 0%, #580064 100%);
+            background: linear-gradient(180deg, #2d0035 0%, #37003c 50%, #4a0052 100%);
             padding-top: 2rem;
+            border-right: 2px solid rgba(0, 255, 255, 0.2);
         }}
         
         [data-testid="stSidebar"] .stMarkdown {{
-            color: white;
+            color: rgba(255, 255, 255, 0.95);
         }}
         
         [data-testid="stSidebar"] label {{
             color: white !important;
             font-weight: 600;
             font-size: 0.95rem;
+            text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
         }}
         
         [data-testid="stSidebar"] .stSelectbox > div > div {{
             background-color: rgba(255, 255, 255, 0.1);
-            border: 1px solid rgba(255, 255, 255, 0.2);
+            border: 1px solid rgba(0, 255, 255, 0.3);
             color: white;
         }}
         
@@ -120,115 +150,138 @@ def load_custom_css():
             color: white !important;
         }}
         
+        [data-testid="stSidebar"] small {{
+            color: rgba(255, 255, 255, 0.7) !important;
+        }}
+        
         /* Cards */
         .fpl-card {{
-            background-color: {FPL_COLORS['card']};
+            background: linear-gradient(135deg, rgba(55, 0, 60, 0.6) 0%, rgba(45, 0, 53, 0.8) 100%);
+            backdrop-filter: blur(10px);
             padding: 2rem;
             border-radius: 16px;
-            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
+            box-shadow: 0 4px 20px rgba(0, 255, 255, 0.2);
             margin: 1.5rem 0;
-            border-left: 5px solid {FPL_COLORS['accent']};
+            border: 1px solid rgba(0, 255, 255, 0.3);
+            border-left: 4px solid #00ffff;
             animation: fadeIn 0.5s ease-out;
             transition: transform 0.3s ease, box-shadow 0.3s ease;
         }}
         
         .fpl-card:hover {{
             transform: translateY(-4px);
-            box-shadow: 0 8px 30px rgba(233, 0, 82, 0.15);
+            box-shadow: 0 8px 30px rgba(0, 255, 255, 0.5), 0 0 20px rgba(0, 255, 255, 0.3);
+            border-color: rgba(0, 255, 255, 0.6);
         }}
         
         .fpl-card h1, .fpl-card h2, .fpl-card h3, .fpl-card h4, .fpl-card h5 {{
-            color: {FPL_COLORS['primary']} !important;
+            color: #00ffff !important;
+            text-shadow: 0 0 15px rgba(0, 255, 255, 0.5), 0 2px 4px rgba(0, 0, 0, 0.3);
+            font-weight: 700;
+            margin-bottom: 1rem;
         }}
         
         .fpl-card p, .fpl-card span, .fpl-card li, .fpl-card div, .fpl-card {{
-            color: #2d2d2d !important;
+            color: rgba(255, 255, 255, 0.95) !important;
+            line-height: 1.6;
+            font-size: 0.95rem;
         }}
         
         .fpl-card *, .fpl-card .stMarkdown, .fpl-card .stMarkdown * {{
-            color: #2d2d2d !important;
+            color: white !important;
         }}
         
         .player-card {{
-            background: linear-gradient(135deg, {FPL_COLORS['card']} 0%, #f9f9f9 100%);
+            background: linear-gradient(135deg, rgba(55, 0, 60, 0.5) 0%, rgba(74, 0, 82, 0.6) 100%);
+            backdrop-filter: blur(8px);
             padding: 1.5rem;
             border-radius: 12px;
-            box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
+            box-shadow: 0 2px 12px rgba(0, 255, 255, 0.15);
             margin: 0.75rem 0;
-            border-left: 4px solid {FPL_COLORS['secondary']};
+            border: 1px solid rgba(0, 255, 255, 0.2);
+            border-left: 4px solid #00ffff;
             transition: all 0.3s ease;
         }}
         
         .player-card:hover {{
             transform: translateX(8px);
-            box-shadow: 0 4px 16px rgba(0, 255, 135, 0.2);
+            box-shadow: 0 4px 16px rgba(0, 255, 255, 0.4), 0 0 15px rgba(0, 255, 255, 0.2);
+            border-color: rgba(0, 255, 255, 0.5);
         }}
         
         .player-card h3, .player-card h4 {{
-            color: {FPL_COLORS['primary']} !important;
+            color: #00ffff !important;
+            text-shadow: 0 0 10px rgba(0, 255, 255, 0.4);
+            font-weight: 700;
+            margin-bottom: 0.75rem;
         }}
         
         .player-card p, .player-card span, .player-card div, .player-card li {{
-            color: #2d2d2d !important;
+            color: rgba(255, 255, 255, 0.9) !important;
+            line-height: 1.5;
         }}
         
         .player-card *, .player-card .stMarkdown, .player-card .stMarkdown * {{
-            color: #2d2d2d !important;
+            color: white !important;
         }}
         
         .stat-card {{
-            background: linear-gradient(135deg, {FPL_COLORS['primary']} 0%, #580064 100%);
+            background: linear-gradient(135deg, #00ffff 0%, #8000ff 100%);
             padding: 1.5rem;
             border-radius: 12px;
             color: white;
             text-align: center;
-            box-shadow: 0 4px 12px rgba(55, 0, 60, 0.3);
+            box-shadow: 0 4px 12px rgba(0, 255, 255, 0.4);
         }}
         
         .stat-card h3 {{
             font-size: 2rem;
             margin: 0;
-            color: {FPL_COLORS['secondary']};
+            color: white;
             font-weight: 700;
+            text-shadow: 0 0 15px rgba(0, 255, 255, 0.5), 0 2px 6px rgba(0, 0, 0, 0.5);
         }}
         
         .stat-card p {{
             font-size: 0.9rem;
             margin: 0.5rem 0 0 0;
-            color: rgba(255, 255, 255, 0.8);
+            color: rgba(255, 255, 255, 0.9);
+            text-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
         }}
         
         /* Query Input */
         .stTextInput > label {{
             color: white !important;
             font-weight: 600;
-            font-size: 1rem;
+            font-size: 1.05rem;
+            text-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
         }}
         
         .stTextInput > div > div > input {{
-            border: 2px solid {FPL_COLORS['border']};
+            border: 2px solid rgba(0, 255, 255, 0.3);
             border-radius: 8px;
             padding: 0.75rem;
             font-size: 1rem;
             transition: all 0.3s;
-            color: {FPL_COLORS['primary']} !important;
-            background-color: white;
+            color: white !important;
+            background: rgba(55, 0, 60, 0.6);
+            backdrop-filter: blur(10px);
         }}
         
         .stTextInput > div > div > input::placeholder {{
-            color: {FPL_COLORS['text_light']} !important;
+            color: rgba(255, 255, 255, 0.5) !important;
         }}
         
         .stTextInput > div > div > input:focus {{
-            border-color: {FPL_COLORS['accent']};
-            box-shadow: 0 0 0 3px rgba(233, 0, 82, 0.1);
+            border-color: #00ffff;
+            box-shadow: 0 0 0 3px rgba(0, 255, 255, 0.2);
         }}
         
         /* Buttons */
         .stButton > button {{
             background: white !important;
-            color: {FPL_COLORS['primary']} !important;
-            border: 2px solid {FPL_COLORS['accent']} !important;
+            color: #37003c !important;
+            border: 2px solid #00ffff !important;
             border-radius: 10px;
             padding: 0.875rem 2.5rem;
             font-weight: 700;
@@ -236,19 +289,20 @@ def load_custom_css():
             text-transform: uppercase;
             letter-spacing: 1px;
             transition: all 0.3s ease;
-            box-shadow: 0 4px 15px rgba(233, 0, 82, 0.2);
+            box-shadow: 0 4px 15px rgba(0, 255, 255, 0.3);
             position: relative;
             overflow: hidden;
         }}
         
         .stButton > button *, .stButton > button p {{
-            color: {FPL_COLORS['primary']} !important;
+            color: #37003c !important;
+            font-weight: 700;
         }}
         
         .stButton > button:hover {{
             transform: translateY(-3px);
-            box-shadow: 0 8px 25px rgba(55, 0, 60, 0.3);
-            background: {FPL_COLORS['primary']} !important;
+            box-shadow: 0 8px 25px rgba(0, 255, 255, 0.5);
+            background: linear-gradient(135deg, #00ffff 0%, #8000ff 100%) !important;
             color: white !important;
             animation: pulse 0.6s ease;
         }}
@@ -264,24 +318,25 @@ def load_custom_css():
         
         /* Expander */
         .streamlit-expanderHeader {{
-            background-color: {FPL_COLORS['card']};
-            border: 1px solid {FPL_COLORS['border']};
+            background: linear-gradient(135deg, rgba(55, 0, 60, 0.5) 0%, rgba(45, 0, 53, 0.7) 100%);
+            border: 1px solid rgba(0, 255, 255, 0.3);
             border-radius: 8px;
-            color: #2d2d2d !important;
+            color: white !important;
             font-weight: 600;
+            text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
         }}
         
         .streamlit-expanderHeader * {{
-            color: #2d2d2d !important;
+            color: white !important;
         }}
         
         [data-testid="stExpander"] {{
-            background-color: {FPL_COLORS['card']};
+            background: linear-gradient(135deg, rgba(55, 0, 60, 0.4) 0%, rgba(45, 0, 53, 0.6) 100%);
         }}
         
         [data-testid="stExpander"] .stMarkdown,
         [data-testid="stExpander"] .stMarkdown * {{
-            color: #2d2d2d !important;
+            color: white !important;
         }}
         
         /* Code blocks */
@@ -299,24 +354,27 @@ def load_custom_css():
         
         /* Success/Info/Warning boxes */
         .stSuccess {{
-            background-color: rgba(0, 255, 135, 0.1);
+            background: linear-gradient(135deg, rgba(0, 255, 135, 0.15) 0%, rgba(0, 200, 100, 0.1) 100%);
             border-left: 4px solid {FPL_COLORS['success']};
             border-radius: 8px;
             padding: 1rem;
+            border: 1px solid rgba(0, 255, 135, 0.3);
         }}
         
         .stInfo {{
-            background-color: rgba(57, 73, 171, 0.1);
-            border-left: 4px solid {FPL_COLORS['info']};
+            background: linear-gradient(135deg, rgba(0, 255, 255, 0.15) 0%, rgba(0, 200, 255, 0.1) 100%);
+            border-left: 4px solid #00ffff;
             border-radius: 8px;
             padding: 1rem;
+            border: 1px solid rgba(0, 255, 255, 0.3);
         }}
         
         .stWarning {{
-            background-color: rgba(255, 152, 0, 0.1);
+            background: linear-gradient(135deg, rgba(255, 152, 0, 0.15) 0%, rgba(255, 120, 0, 0.1) 100%);
             border-left: 4px solid {FPL_COLORS['warning']};
             border-radius: 8px;
             padding: 1rem;
+            border: 1px solid rgba(255, 152, 0, 0.3);
         }}
         
         /* Main content area text */
@@ -327,6 +385,7 @@ def load_custom_css():
         div[data-testid="stVerticalBlock"] > div > div > h3,
         div[data-testid="stVerticalBlock"] > div > div > label {{
             color: white !important;
+            text-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
         }}
         
         /* Text inside cards should be dark */
@@ -354,22 +413,22 @@ def load_custom_css():
         }}
         
         .stTabs [data-baseweb="tab"] {{
-            background-color: {FPL_COLORS['card']};
+            background: linear-gradient(135deg, rgba(55, 0, 60, 0.4) 0%, rgba(45, 0, 53, 0.6) 100%);
             border-radius: 8px 8px 0 0;
             padding: 0.75rem 1.5rem;
-            border: 1px solid {FPL_COLORS['border']};
-            color: #2d2d2d !important;
+            border: 1px solid rgba(0, 255, 255, 0.2);
+            color: rgba(255, 255, 255, 0.7) !important;
             font-weight: 600;
         }}
         
         .stTabs [data-baseweb="tab"] * {{
-            color: #2d2d2d !important;
+            color: rgba(255, 255, 255, 0.7) !important;
         }}
         
         .stTabs [aria-selected="true"] {{
-            background: linear-gradient(135deg, {FPL_COLORS['primary']} 0%, #580064 100%);
+            background: linear-gradient(135deg, #00ffff 0%, #8000ff 100%);
             color: white !important;
-            border-color: {FPL_COLORS['primary']};
+            border-color: #00ffff;
         }}
         
         .stTabs [aria-selected="true"] * {{
@@ -378,19 +437,19 @@ def load_custom_css():
         
         /* Tab content area */
         .stTabs [data-baseweb="tab-panel"] {{
-            background-color: {FPL_COLORS['card']};
+            background: linear-gradient(135deg, #2d0035 0%, #37003c 100%);
             padding: 1.5rem;
             border-radius: 0 0 12px 12px;
         }}
         
         .stTabs [data-baseweb="tab-panel"] * {{
-            color: #2d2d2d !important;
+            color: white !important;
         }}
         
         .stTabs [data-baseweb="tab-panel"] h1,
         .stTabs [data-baseweb="tab-panel"] h2,
         .stTabs [data-baseweb="tab-panel"] h3 {{
-            color: {FPL_COLORS['primary']} !important;
+            color: white !important;
         }}
         
         /* JSON viewer inside tabs - white text on dark background */
@@ -422,28 +481,28 @@ def load_custom_css():
             color: white !important;
         }}
         
-        /* Override for white cards - make text dark */
+        /* Override for dark cards - make text white with cyan headings */
         .main .block-container .fpl-card,
         .main .block-container .fpl-card * {{
-            color: #2d2d2d !important;
+            color: white !important;
         }}
         
         .main .block-container .fpl-card h1,
         .main .block-container .fpl-card h2,
         .main .block-container .fpl-card h3 {{
-            color: {FPL_COLORS['primary']} !important;
+            color: #00ffff !important;
         }}
         
-        /* Player cards - dark text on white */
+        /* Player cards - white text with cyan headings */
         .main .block-container .player-card,
         .main .block-container .player-card * {{
-            color: #2d2d2d !important;
+            color: white !important;
         }}
         
         .main .block-container .player-card h1,
         .main .block-container .player-card h2,
         .main .block-container .player-card h3 {{
-            color: {FPL_COLORS['primary']} !important;
+            color: #00ffff !important;
         }}
         
         /* JSON viewer text */
@@ -472,7 +531,7 @@ def load_custom_css():
         
         /* Info/Success/Warning boxes text */
         .stSuccess *, .stInfo *, .stWarning * {{
-            color: #2d2d2d !important;
+            color: white !important;
         }}
         
         /* Metric labels and values */
@@ -480,18 +539,24 @@ def load_custom_css():
             color: white !important;
         }}
         
-        div[data-testid="stVerticalBlock"] [data-testid="stMetricLabel"] {{
-            color: #2d2d2d !important;
+        [data-testid="stMetricValue"] {{
+            color: #00ffff !important;
         }}
         
-        /* Ensure section headings on purple background are white */
-        .main h1, .main h2, .main h3 {{
+        div[data-testid="stVerticalBlock"] [data-testid="stMetricLabel"] {{
             color: white !important;
         }}
         
-        /* But keep headings in cards as purple */
+        /* Ensure section headings on purple background are white with glow */
+        .main h1, .main h2, .main h3 {{
+            color: white !important;
+            text-shadow: 0 0 10px rgba(0, 255, 255, 0.3), 0 2px 4px rgba(0, 0, 0, 0.5);
+        }}
+        
+        /* Headings in cards use cyan with glow */
         .main .fpl-card h1, .main .fpl-card h2, .main .fpl-card h3 {{
-            color: {FPL_COLORS['primary']} !important;
+            color: #00ffff !important;
+            text-shadow: 0 0 15px rgba(0, 255, 255, 0.5);
         }}
         
         /* Markdown headings on main background */
@@ -499,6 +564,41 @@ def load_custom_css():
         .main > div > div > div > .stMarkdown h2,
         .main > div > div > div > .stMarkdown h3 {{
             color: white !important;
+        }}
+        
+        /* Regular text paragraphs */
+        .main > div > div > div > .stMarkdown p {{
+            color: rgba(255, 255, 255, 0.95) !important;
+            line-height: 1.7;
+        }}
+        
+        /* Strong and emphasis text */
+        .main strong, .main b {{
+            color: #00ffff !important;
+            font-weight: 700;
+        }}
+        
+        .main em, .main i {{
+            color: rgba(255, 255, 255, 0.9) !important;
+        }}
+        
+        /* List styling */
+        .main ul, .main ol {{
+            color: rgba(255, 255, 255, 0.95) !important;
+        }}
+        
+        .main li {{
+            line-height: 1.6;
+            margin-bottom: 0.5rem;
+        }}
+        
+        /* Code blocks */
+        .main code {{
+            background: rgba(0, 255, 255, 0.1) !important;
+            color: #00ffff !important;
+            padding: 0.2rem 0.4rem;
+            border-radius: 4px;
+            font-family: 'Courier New', monospace;
         }}
     </style>
     """, unsafe_allow_html=True)
@@ -705,6 +805,7 @@ def render_sidebar():
         for example in examples:
             if st.button(example, key=f"example_{example}", use_container_width=True):
                 st.session_state.example_query = example
+                st.session_state.auto_search = True
     
     return {
         'model_name': model_name,
@@ -912,6 +1013,202 @@ def render_results(results: dict, config: dict):
     </div>
     """, unsafe_allow_html=True)
     
+    # Show top players in card format if available
+    if results.get('context') and len(results['context']) > 0:
+        st.markdown("### 👥 Top Players from Results")
+        
+        # Extract player names from the LLM response text
+        response_text = results.get('response', '')
+        mentioned_names = extract_player_names_from_response(response_text)
+        
+        # Match mentioned players with context data
+        players_to_show = []
+        context_players = results['context']
+        used_indices = set()
+        
+        for mentioned_name in mentioned_names[:5]:  # Max 5 players
+            best_match = None
+            best_score = 0
+            best_idx = -1
+            
+            for idx, player in enumerate(context_players):
+                if idx in used_indices:
+                    continue
+                    
+                # Get all possible name fields
+                player_names = []
+                
+                # Build full name from first + last
+                if 'first_name' in player and 'second_name' in player:
+                    full_name = f"{player.get('first_name', '')} {player.get('second_name', '')}".strip()
+                    if full_name:
+                        player_names.append(full_name)
+                
+                # Add other name fields
+                for key in ['name', 'player_name', 'web_name', 'full_name']:
+                    if key in player and player[key]:
+                        name_val = str(player[key]).strip()
+                        if name_val and name_val not in player_names:
+                            player_names.append(name_val)
+                
+                if not player_names:
+                    continue
+                
+                # Calculate match score
+                mentioned_lower = mentioned_name.lower().strip()
+                mentioned_parts = mentioned_lower.split()
+                
+                for player_name in player_names:
+                    player_lower = player_name.lower().strip()
+                    player_parts = player_lower.split()
+                    
+                    current_score = 0
+                    
+                    # Exact match
+                    if mentioned_lower == player_lower:
+                        current_score = 100
+                    # First and last name match
+                    elif (len(mentioned_parts) >= 2 and len(player_parts) >= 2 and
+                          mentioned_parts[0] == player_parts[0] and 
+                          mentioned_parts[-1] == player_parts[-1]):
+                        current_score = 98
+                    # Last name exact match
+                    elif len(mentioned_parts) >= 2 and len(player_parts) >= 2 and mentioned_parts[-1] == player_parts[-1]:
+                        current_score = 90
+                    # Full contains
+                    elif mentioned_lower in player_lower:
+                        current_score = 85
+                    elif player_lower in mentioned_lower:
+                        current_score = 80
+                    
+                    if current_score > best_score:
+                        best_score = current_score
+                        best_match = player
+                        best_idx = idx
+                
+                if best_score >= 98:
+                    break
+            
+            if best_match and best_score >= 80:
+                player_display_name = best_match.get('name') or best_match.get('web_name') or best_match.get('player_name', 'Unknown')
+                logger.info(f"  ✓ '{mentioned_name}' → '{player_display_name}' (score: {best_score})")
+                players_to_show.append(best_match)
+                used_indices.add(best_idx)
+            else:
+                logger.warning(f"  ✗ '{mentioned_name}' no match (best: {best_score})")
+        
+        # Fallback to context if no names extracted
+        if not players_to_show:
+            logger.warning("⚠️ No matches found, using first 3 from context")
+            players_to_show = context_players[:3]
+        else:
+            logger.info(f"✓ Matched {len(players_to_show)} players from response")
+        
+        # Display up to 5 players in cards
+        display_count = min(5, len(players_to_show))
+        
+        # Create rows of 3 columns each for better layout
+        for row_start in range(0, display_count, 3):
+            row_players = players_to_show[row_start:row_start + 3]
+            cols = st.columns(len(row_players))
+            for col_idx, player in enumerate(row_players):
+                idx = row_start + col_idx
+                with cols[col_idx]:
+                    # Smart name extraction
+                    player_name = 'Unknown'
+                    for key in ['name', 'player_name', 'web_name', 'full_name', 'first_name']:
+                        if key in player and player[key]:
+                            player_name = str(player[key])
+                            break
+                    
+                    # Smart team extraction
+                    team = None
+                    for key in ['team', 'team_name', 'team_short_name', 'club']:
+                        if key in player and player[key]:
+                            team = str(player[key])
+                            break
+                    
+                    # Smart position extraction
+                    position = None
+                    for key in ['position', 'element_type', 'singular_name_short', 'pos']:
+                        if key in player and player[key]:
+                            position = str(player[key])
+                            break
+                    
+                    # Get relevant stats
+                    goals = 0
+                    for key in ['goals_scored', 'goals', 'total_goals']:
+                        if key in player and player[key] is not None:
+                            goals = int(player[key])
+                            break
+                    
+                    assists = 0
+                    for key in ['assists', 'total_assists']:
+                        if key in player and player[key] is not None:
+                            assists = int(player[key])
+                            break
+                    
+                    clean_sheets = 0
+                    for key in ['clean_sheets', 'total_clean_sheets']:
+                        if key in player and player[key] is not None:
+                            clean_sheets = int(player[key])
+                            break
+                    
+                    # Build info text
+                    info_parts = []
+                    if team:
+                        info_parts.append(team)
+                    if position:
+                        info_parts.append(position)
+                    info_text = ' • '.join(info_parts) if info_parts else 'Premier League Player'
+                    
+                    # Get player photo
+                    photo_url = find_player_photo(player_name)
+                    initials = get_player_initials(player_name)
+                    is_generated_avatar = photo_url and 'ui-avatars.com' in photo_url
+                    
+                    # Build stats badges HTML
+                    stats_badges = f'''<span style="background: linear-gradient(135deg, #e90052 0%, #ff4081 100%); 
+                                 color: white; padding: 0.4rem 0.8rem; border-radius: 12px; 
+                                 font-size: 0.85rem; font-weight: 600;
+                                 box-shadow: 0 2px 8px rgba(233, 0, 82, 0.3);">⚽ {goals}</span>
+                        <span style="background: linear-gradient(135deg, #3949ab 0%, #5e35b1 100%); 
+                                 color: white; padding: 0.4rem 0.8rem; border-radius: 12px; 
+                                 font-size: 0.85rem; font-weight: 600;
+                                 box-shadow: 0 2px 8px rgba(57, 73, 171, 0.3);">🎯 {assists}</span>'''
+                    
+                    if clean_sheets > 0:
+                        stats_badges += f'''
+                        <span style="background: linear-gradient(135deg, #00ff87 0%, #00d9a8 100%); 
+                                 color: #37003c; padding: 0.4rem 0.8rem; border-radius: 12px; 
+                                 font-size: 0.85rem; font-weight: 600;
+                                 box-shadow: 0 2px 8px rgba(0, 255, 135, 0.3);">🛡️ {clean_sheets}</span>'''
+                    
+                    # Create player card
+                    st.markdown(f"""
+                    <div class="player-card" style="animation: fadeIn {0.6 + idx*0.2}s ease-out; 
+                         box-shadow: 0 4px 20px rgba(0, 255, 135, 0.3);
+                         border: 1px solid rgba(0, 255, 135, 0.2);
+                         transition: all 0.3s ease;
+                         text-align: center;">
+                        <div style="margin-bottom: 1rem;">
+                            <img src="{photo_url}" 
+                                 alt="{player_name}"
+                                 style="width: 110px; height: 140px; 
+                                        border-radius: {'50%' if is_generated_avatar else '12px'}; 
+                                        border: 3px solid rgba(0, 255, 135, 0.4);
+                                        box-shadow: 0 4px 15px rgba(0, 255, 135, 0.3);
+                                        object-fit: cover;"
+                                 onerror="this.onerror=null; this.src='https://ui-avatars.com/api/?name={player_name.replace(' ', '+')}&size=140&background=37003c&color=00ff87&bold=true&font-size=0.4&rounded=true';">
+                        </div>
+                        <h4 style="margin: 0; color: #37003c; font-size: 1.2rem; font-weight: 700;">{player_name}</h4>
+                        <p style="margin: 0.5rem 0; color: #6c757d; font-size: 0.9rem; font-weight: 500;">{info_text}</p>
+                        <div style="margin-top: 1rem; display: flex; gap: 0.75rem; flex-wrap: wrap; justify-content: center;">
+                            {stats_badges}
+                        </div>
+                    </div>
+                    """, unsafe_allow_html=True)
+    
     # Detailed information in tabs (conditional based on settings)
     tabs = ["📋 Context", "🔍 Analysis"]
     if config.get('show_debug', False):
@@ -999,7 +1296,7 @@ def render_results(results: dict, config: dict):
 
 
 def main():
-    """Main application."""
+    """Main application with tab-based navigation."""
     
     # Page config
     st.set_page_config(
@@ -1021,10 +1318,52 @@ def main():
     # Render sidebar and get config
     config = render_sidebar()
     
+    # Main tabs
+    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+        "💬 Chat Assistant",
+        "📈 Live Dashboard",
+        "🔄 Player Comparison",
+        "📊 Advanced Analytics",
+        "🌐 Graph Explorer",
+        "⚙️ Settings & Export"
+    ])
+    
+    # Tab 1: Chat Assistant (Original functionality)
+    with tab1:
+        render_chat_interface(config)
+    
+    # Tab 2: Live Dashboard
+    with tab2:
+        with GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USERNAME, NEO4J_PASSWORD)) as driver:
+            render_live_dashboard(driver, NEO4J_DATABASE)
+    
+    # Tab 3: Player Comparison
+    with tab3:
+        render_player_comparison_tab(config)
+    
+    # Tab 4: Advanced Analytics
+    with tab4:
+        render_analytics_tab(config)
+    
+    # Tab 5: Graph Explorer
+    with tab5:
+        render_graph_explorer_tab(config)
+    
+    # Tab 6: Settings & Export
+    with tab6:
+        render_settings_export_tab()
+
+
+def render_chat_interface(config):
+    """Render the original chat interface."""
     # Check for example query
+    auto_search = False
     if 'example_query' in st.session_state:
         query = st.session_state.example_query
         del st.session_state.example_query
+        if 'auto_search' in st.session_state:
+            auto_search = st.session_state.auto_search
+            del st.session_state.auto_search
     else:
         query = None
     
@@ -1048,8 +1387,8 @@ def main():
     if clear_button:
         st.rerun()
     
-    # Process query
-    if search_button and user_query:
+    # Process query (either from button click or auto-search from example)
+    if (search_button or auto_search) and user_query:
         with st.spinner("🔄 Processing your query..."):
             try:
                 results = process_query(user_query, config)
@@ -1079,6 +1418,293 @@ def main():
         for i, item in enumerate(st.session_state.query_history[:5]):
             with st.expander(f"🔹 {item['query']}", expanded=(i == 0)):
                 render_results(item['results'], config)
+
+
+def render_player_comparison_tab(config):
+    """Render the player comparison tab."""
+    render_player_comparison_ui()
+    
+    # Sample data for demo
+    if st.button("🎯 Load Sample Comparison"):
+        sample_players = [
+            {
+                'name': 'Erling Haaland',
+                'team': 'Man City',
+                'position': 'Forward',
+                'goals': 36,
+                'assists': 8,
+                'clean_sheets': 0,
+                'bonus': 30,
+                'minutes': 2880,
+                'total_points': 272,
+                'bps': 820,
+                'ict_index': 280,
+                'cost': 12.0
+            },
+            {
+                'name': 'Mohamed Salah',
+                'team': 'Liverpool',
+                'position': 'Midfielder',
+                'goals': 19,
+                'assists': 12,
+                'clean_sheets': 0,
+                'bonus': 25,
+                'minutes': 3000,
+                'total_points': 225,
+                'bps': 750,
+                'ict_index': 260,
+                'cost': 13.0
+            },
+            {
+                'name': 'Harry Kane',
+                'team': 'Spurs',
+                'position': 'Forward',
+                'goals': 30,
+                'assists': 3,
+                'clean_sheets': 0,
+                'bonus': 20,
+                'minutes': 3100,
+                'total_points': 219,
+                'bps': 690,
+                'ict_index': 240,
+                'cost': 11.0
+            }
+        ]
+        
+        compare_players(sample_players)
+
+
+def render_analytics_tab(config):
+    """Render the advanced analytics tab."""
+    st.markdown("### 📊 Advanced Analytics")
+    
+    # Analysis type selector
+    analysis_type = st.selectbox(
+        "Select Analysis Type",
+        ["Top Performers by Metric", "Position Distribution", "Value Analysis", "Team Performance"]
+    )
+    
+    if analysis_type == "Top Performers by Metric":
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            metric = st.selectbox(
+                "Select Metric",
+                ["goals", "assists", "total_points", "clean_sheets", "bonus"]
+            )
+        with col2:
+            season = st.selectbox("Season", ["2022-23", "2021-22", "2020-21"])
+        with col3:
+            top_n = st.number_input("Number of Players", 5, 50, 10)
+        
+        if st.button("🔍 Analyze", use_container_width=True):
+            with st.spinner("Loading data..."):
+                with GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USERNAME, NEO4J_PASSWORD)) as driver:
+                    with driver.session(database=NEO4J_DATABASE) as session:
+                        query = f"""
+                        MATCH (p:Player)-[r:PLAYED_IN]->(s:Season {{name: $season}})
+                        WHERE r.{metric} IS NOT NULL
+                        RETURN p.name as name, p.team_name as team, p.position as position, 
+                               r.{metric} as value
+                        ORDER BY r.{metric} DESC
+                        LIMIT $limit
+                        """
+                        result = session.run(query, season=season, limit=top_n)
+                        data = [dict(record) for record in result]
+                
+                if data:
+                    # Create dataframe
+                    df = pd.DataFrame(data)
+                    df.columns = ['name', 'team', 'position', metric]
+                    
+                    # Create bar chart
+                    fig = create_player_comparison_chart(data, metric=metric, chart_type='bar')
+                    if fig:
+                        st.plotly_chart(fig, use_container_width=True)
+                    
+                    # Display table
+                    st.dataframe(df, use_container_width=True)
+                else:
+                    st.warning("No data found for the selected criteria.")
+    
+    elif analysis_type == "Position Distribution":
+        season = st.selectbox("Season", ["2022-23", "2021-22", "2020-21"])
+        
+        if st.button("🔍 Analyze", use_container_width=True):
+            with st.spinner("Loading data..."):
+                with GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USERNAME, NEO4J_PASSWORD)) as driver:
+                    with driver.session(database=NEO4J_DATABASE) as session:
+                        query = """
+                        MATCH (p:Player)-[:PLAYED_IN]->(s:Season {name: $season})
+                        RETURN p.position as position, count(p) as count
+                        """
+                        result = session.run(query, season=season)
+                        data = [{'position': r['position'], 'count': r['count']} for r in result]
+                
+                if data:
+                    fig = create_position_distribution(data)
+                    if fig:
+                        st.plotly_chart(fig, use_container_width=True)
+                else:
+                    st.warning("No data found.")
+
+
+def render_graph_explorer_tab(config):
+    """Render the graph explorer tab."""
+    st.markdown("### 🌐 Interactive Graph Explorer")
+    
+    query_type = st.selectbox(
+        "Select Query Type",
+        ["Player Connections", "Team Network", "Custom Cypher Query"]
+    )
+    
+    if query_type == "Player Connections":
+        player_name = st.text_input("Enter Player Name", "Erling Haaland")
+        depth = st.slider("Connection Depth", 1, 3, 1)
+        
+        if st.button("🔍 Explore Connections"):
+            with st.spinner("Fetching graph data..."):
+                with GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USERNAME, NEO4J_PASSWORD)) as driver:
+                    with driver.session(database=NEO4J_DATABASE) as session:
+                        query = """
+                        MATCH path = (p:Player {name: $name})-[*1..%d]-(connected)
+                        RETURN path
+                        LIMIT 50
+                        """ % depth
+                        
+                        result = session.run(query, name=player_name)
+                        neo4j_results = list(result)
+                
+                if neo4j_results:
+                    render_graph(neo4j_results, height='700px')
+                    st.success(f"✅ Found {len(neo4j_results)} connections for {player_name}")
+                else:
+                    st.warning(f"No connections found for {player_name}")
+    
+    elif query_type == "Custom Cypher Query":
+        st.markdown("#### Execute Custom Cypher Query")
+        cypher_query = st.text_area(
+            "Enter Cypher Query",
+            value="MATCH (p:Player)-[r:PLAYED_IN]->(s:Season) RETURN p, r, s LIMIT 25",
+            height=150
+        )
+        
+        if st.button("▶️ Execute"):
+            with st.spinner("Executing query..."):
+                with GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USERNAME, NEO4J_PASSWORD)) as driver:
+                    with driver.session(database=NEO4J_DATABASE) as session:
+                        try:
+                            result = session.run(cypher_query)
+                            neo4j_results = list(result)
+                            
+                            if neo4j_results:
+                                render_graph(neo4j_results, height='700px')
+                                st.success(f"✅ Retrieved {len(neo4j_results)} records")
+                            else:
+                                st.info("Query returned no results")
+                        except Exception as e:
+                            st.error(f"Query error: {str(e)}")
+
+
+def render_settings_export_tab():
+    """Render the settings and export tab."""
+    st.markdown("### ⚙️ Settings & Export")
+    
+    # Export section
+    st.markdown("#### 📤 Export Data")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        export_format = st.selectbox(
+            "Export Format",
+            ["JSON", "CSV", "Excel"]
+        )
+    
+    with col2:
+        st.markdown("<br>", unsafe_allow_html=True)  # Spacing
+        if st.button("📥 Export Query History", use_container_width=True):
+            if st.session_state.query_history:
+                # Prepare export data
+                export_data = []
+                for item in st.session_state.query_history:
+                    export_data.append({
+                        'query': item['query'],
+                        'timestamp': time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(item['timestamp'])),
+                        'results_summary': str(item['results'])[:200]
+                    })
+                
+                if export_format == "JSON":
+                    json_str = json.dumps(export_data, indent=2)
+                    st.download_button(
+                        label="Download JSON",
+                        data=json_str,
+                        file_name=f"fpl_query_history_{int(time.time())}.json",
+                        mime="application/json"
+                    )
+                
+                elif export_format == "CSV":
+                    df = pd.DataFrame(export_data)
+                    csv = df.to_csv(index=False)
+                    st.download_button(
+                        label="Download CSV",
+                        data=csv,
+                        file_name=f"fpl_query_history_{int(time.time())}.csv",
+                        mime="text/csv"
+                    )
+                
+                elif export_format == "Excel":
+                    df = pd.DataFrame(export_data)
+                    # Use xlsxwriter engine
+                    from io import BytesIO
+                    output = BytesIO()
+                    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                        df.to_excel(writer, index=False, sheet_name='Query History')
+                    output.seek(0)
+                    
+                    st.download_button(
+                        label="Download Excel",
+                        data=output,
+                        file_name=f"fpl_query_history_{int(time.time())}.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    )
+            else:
+                st.warning("No query history to export.")
+    
+    st.markdown("---")
+    
+    # Cache management
+    st.markdown("#### 🗄️ Cache Management")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        if st.button("🔄 Clear Cache", use_container_width=True):
+            st.cache_data.clear()
+            st.success("✅ Cache cleared successfully!")
+    
+    with col2:
+        if st.button("🔁 Reset Session", use_container_width=True):
+            for key in list(st.session_state.keys()):
+                del st.session_state[key]
+            st.success("✅ Session reset successfully!")
+            st.rerun()
+    
+    st.markdown("---")
+    
+    # App info
+    st.markdown("#### ℹ️ Application Info")
+    st.info("""
+    **FPL Knowledge Graph Assistant v2.0**
+    
+    Enhanced with:
+    - 📈 Live Metrics Dashboard
+    - 🔄 Player Comparison Tool
+    - 📊 Advanced Analytics
+    - 🌐 Interactive Graph Explorer
+    - 📤 Data Export (JSON/CSV/Excel)
+    
+    Built with Streamlit, Neo4j, and Plotly
+    """)
 
 
 if __name__ == "__main__":
