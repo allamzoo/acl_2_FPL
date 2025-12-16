@@ -24,6 +24,7 @@ class BaselineRetriever:
             NEO4J_URI,
             auth=(NEO4J_USERNAME, NEO4J_PASSWORD)
         )
+        self.executed_queries = []  # Track all executed queries
         logger.info("Baseline retriever initialized")
     
     def close(self):
@@ -31,6 +32,97 @@ class BaselineRetriever:
         if self.driver:
             self.driver.close()
             logger.info("Neo4j connection closed")
+    
+    def get_executed_queries(self) -> List[Dict[str, Any]]:
+        """Get list of all executed queries in this session."""
+        return self.executed_queries.copy()
+    
+    def get_combined_graph_data(self) -> Dict[str, List]:
+        """
+        Get combined graph data from all executed queries.
+        Returns nodes and relationships from all queries.
+        """
+        combined = {'nodes': [], 'relationships': []}
+        node_ids = set()
+        
+        for query_info in self.executed_queries:
+            graph_data = query_info.get('graph_data', {})
+            
+            # Add nodes (avoid duplicates)
+            for node in graph_data.get('nodes', []):
+                node_id = node.id if hasattr(node, 'id') else str(node)
+                if node_id not in node_ids:
+                    combined['nodes'].append(node)
+                    node_ids.add(node_id)
+            
+            # Add relationships
+            combined['relationships'].extend(graph_data.get('relationships', []))
+        
+        return combined
+    
+    def get_graph_for_visualization(self, player_names: List[str], season: str = "2022-23", limit: int = 50) -> Dict[str, List]:
+        """
+        Query the graph specifically for visualization purposes.
+        Returns nodes and relationships for the specified players.
+        
+        Args:
+            player_names: List of player names to visualize
+            season: Season to filter by
+            limit: Maximum number of relationships to return
+            
+        Returns:
+            Dictionary with 'nodes' and 'relationships' lists
+        """
+        if not player_names:
+            return {'nodes': [], 'relationships': []}
+        
+        # Build query that explicitly returns nodes and relationships
+        query = """
+        MATCH (p:Player)-[r:PLAYED_IN]->(f:Fixture)<-[hf:HAS_FIXTURE]-(gw:Gameweek)
+        WHERE p.player_name IN $player_names
+          AND gw.season = $season
+        OPTIONAL MATCH (f)-[ht:HAS_HOME_TEAM|HAS_AWAY_TEAM]->(t:Team)
+        WITH p, r, f, hf, gw, ht, t
+        LIMIT $limit
+        RETURN p, r, f, hf, gw, ht, t
+        """
+        
+        try:
+            from neo4j.graph import Node, Relationship
+            
+            with self.driver.session(database=NEO4J_DATABASE) as session:
+                result = session.run(query, {
+                    'player_names': player_names[:10],  # Limit to 10 players
+                    'season': season,
+                    'limit': limit
+                })
+                
+                graph_data = {'nodes': [], 'relationships': []}
+                node_ids_seen = set()
+                
+                for record in result:
+                    for key, value in record.items():
+                        if value is not None:
+                            # Check by instance type instead of class name
+                            if isinstance(value, Node):
+                                node_id = value.id if hasattr(value, 'id') else id(value)
+                                if node_id not in node_ids_seen:
+                                    graph_data['nodes'].append(value)
+                                    node_ids_seen.add(node_id)
+                            
+                            elif isinstance(value, Relationship):
+                                graph_data['relationships'].append(value)
+                
+                logger.info(f"Retrieved {len(graph_data['nodes'])} nodes and {len(graph_data['relationships'])} relationships for visualization")
+                return graph_data
+                
+        except Exception as e:
+            logger.error(f"Failed to get graph for visualization: {e}")
+            return {'nodes': [], 'relationships': []}
+    
+    def clear_query_history(self):
+        """Clear the query execution history."""
+        self.executed_queries = []
     
     def __enter__(self):
         """Context manager entry."""
@@ -87,13 +179,14 @@ class BaselineRetriever:
             WHERE played.position = $position 
               AND gw.season = $season
             WITH p.player_name AS player, 
+                 p.team AS team,
                  played.position AS position,
                  SUM(played.goals_scored) AS total_goals,
                  SUM(played.assists) AS total_assists,
                  SUM(played.total_points) AS total_points
             ORDER BY total_goals DESC
             LIMIT $limit
-            RETURN player, position, total_goals, total_assists, total_points
+            RETURN player, team, position, total_goals, total_assists, total_points
             """
             params = {"position": position, "season": season, "limit": limit}
         else:
@@ -101,13 +194,14 @@ class BaselineRetriever:
             MATCH (p:Player)-[played:PLAYED_IN]->(f:Fixture)<-[:HAS_FIXTURE]-(gw:Gameweek)
             WHERE gw.season = $season
             WITH p.player_name AS player, 
+                 p.team AS team,
                  played.position AS position,
                  SUM(played.goals_scored) AS total_goals,
                  SUM(played.assists) AS total_assists,
                  SUM(played.total_points) AS total_points
             ORDER BY total_goals DESC
             LIMIT $limit
-            RETURN player, position, total_goals, total_assists, total_points
+            RETURN player, team, position, total_goals, total_assists, total_points
             """
             params = {"season": season, "limit": limit}
         
@@ -132,18 +226,25 @@ class BaselineRetriever:
         MATCH (p:Player)-[played:PLAYED_IN]->(f:Fixture)<-[:HAS_FIXTURE]-(gw:Gameweek)
         WHERE p.player_name CONTAINS $player_name 
           AND gw.season = $season
-        RETURN p.player_name AS player,
-               gw.season AS season,
-               COUNT(f) AS games_played,
-               SUM(played.minutes) AS total_minutes,
-               SUM(played.goals_scored) AS goals,
-               SUM(played.assists) AS assists,
-               SUM(played.total_points) AS total_points,
-               SUM(played.bonus) AS bonus_points,
-               SUM(played.clean_sheets) AS clean_sheets,
-               SUM(played.yellow_cards) AS yellow_cards,
-               SUM(played.red_cards) AS red_cards,
-               AVG(played.ict_index) AS avg_ict_index
+        WITH p.player_name AS player,
+             p.team AS team,
+             gw.season AS season,
+             COLLECT(DISTINCT played.position)[0] AS position,
+             COUNT(f) AS games_played,
+             SUM(played.minutes) AS total_minutes,
+             SUM(played.goals_scored) AS goals,
+             SUM(played.assists) AS assists,
+             SUM(played.total_points) AS total_points,
+             SUM(played.bonus) AS bonus,
+             SUM(played.bps) AS bps,
+             SUM(played.clean_sheets) AS clean_sheets,
+             SUM(played.yellow_cards) AS yellow_cards,
+             SUM(played.red_cards) AS red_cards,
+             AVG(played.ict_index) AS ict_index
+        RETURN player, team, COALESCE(position, 'N/A') AS position, season, 
+               games_played, total_minutes, goals, assists, total_points, 
+               bonus, bps, clean_sheets, yellow_cards, red_cards, ict_index
+        LIMIT 1
         """
         
         return self._execute_query(query, {
@@ -494,16 +595,84 @@ class BaselineRetriever:
         Returns:
             List of result records as dictionaries
         """
+        # Store query for transparency
+        import time
+        self.executed_queries.append({
+            'query': query,
+            'parameters': parameters,
+            'timestamp': time.time()
+        })
+        
         try:
+            from neo4j.graph import Node, Relationship, Path
+            
             with self.driver.session(database=NEO4J_DATABASE) as session:
-                result = session.run(query, parameters)
-                records = [dict(record) for record in result]
-                logger.info(f"Query executed successfully. Retrieved {len(records)} records.")
+                # Modify query to return graph objects
+                # If query doesn't already return nodes/relationships, wrap it
+                modified_query = query
+                needs_graph_return = 'RETURN' in query.upper() and 'MATCH' in query.upper()
+                
+                result = session.run(modified_query, parameters)
+                
+                # Store both the data and the graph objects
+                records = []
+                graph_data = {'nodes': [], 'relationships': []}
+                node_ids_seen = set()
+                
+                # Process results - extract graph objects BEFORE converting to dict
+                for record in result:
+                    # Extract nodes and relationships FIRST
+                    for key, value in record.items():
+                        if value is not None:
+                            # Use isinstance instead of class name comparison
+                            if isinstance(value, Node):
+                                node_id = value.id if hasattr(value, 'id') else id(value)
+                                if node_id not in node_ids_seen:
+                                    graph_data['nodes'].append(value)
+                                    node_ids_seen.add(node_id)
+                            
+                            elif isinstance(value, Relationship):
+                                graph_data['relationships'].append(value)
+                                # Also add start and end nodes
+                                if hasattr(value, 'start_node') and value.start_node:
+                                    start_id = value.start_node.id if hasattr(value.start_node, 'id') else id(value.start_node)
+                                    if start_id not in node_ids_seen:
+                                        graph_data['nodes'].append(value.start_node)
+                                        node_ids_seen.add(start_id)
+                                if hasattr(value, 'end_node') and value.end_node:
+                                    end_id = value.end_node.id if hasattr(value.end_node, 'id') else id(value.end_node)
+                                    if end_id not in node_ids_seen:
+                                        graph_data['nodes'].append(value.end_node)
+                                        node_ids_seen.add(end_id)
+                            
+                            elif isinstance(value, Path):
+                                # Handle paths - extract all nodes and relationships
+                                for node in value.nodes:
+                                    node_id = node.id if hasattr(node, 'id') else id(node)
+                                    if node_id not in node_ids_seen:
+                                        graph_data['nodes'].append(node)
+                                        node_ids_seen.add(node_id)
+                                for rel in value.relationships:
+                                    graph_data['relationships'].append(rel)
+                    
+                    # Now convert record to dict for return
+                    records.append(dict(record))
+                
+                logger.info(f"Query executed successfully. Retrieved {len(records)} records, {len(graph_data['nodes'])} nodes, {len(graph_data['relationships'])} relationships.")
+                
+                # Update last query with result count and graph info
+                self.executed_queries[-1]['result_count'] = len(records)
+                self.executed_queries[-1]['graph_data'] = graph_data
+                self.executed_queries[-1]['node_count'] = len(graph_data['nodes'])
+                self.executed_queries[-1]['relationship_count'] = len(graph_data['relationships'])
+                
                 return records
         except Exception as e:
             logger.error(f"Query execution failed: {str(e)}")
             logger.error(f"Query: {query}")
             logger.error(f"Parameters: {parameters}")
+            # Update last query with error
+            self.executed_queries[-1]['error'] = str(e)
             return []
     
     def format_results_for_llm(self, results: List[Dict[str, Any]], query_type: str) -> str:
@@ -659,7 +828,7 @@ class BaselineRetriever:
         return self._execute_query(query, params)
     
     def build_squad_under_budget(self, season: str = "2021-22", budget: float = 100.0,
-                                  min_points: int = 30, min_games: int = 10) -> Dict[str, Any]:
+                                  min_points: int = 30, min_games: int = 10, randomize: bool = False) -> Dict[str, Any]:
         """
         Build an optimal 15-player FPL squad under budget constraint.
         Squad composition: 2 GK, 5 DEF, 5 MID, 3 FWD
@@ -670,37 +839,53 @@ class BaselineRetriever:
             budget: Total budget in millions (default 100.0)
             min_points: Minimum points threshold (default 30)
             min_games: Minimum games played (default 10)
+            randomize: If True, adds randomness to player selection
             
         Returns:
             Dictionary with squad players and summary stats
         """
+        import random
+        
         # Query to get top value players by position
         query = """
         MATCH (p:Player)-[r:PLAYED_IN]->(f:Fixture)<-[:HAS_FIXTURE]-(gw:Gameweek)
         WHERE r.total_points IS NOT NULL
-          AND r.value IS NOT NULL
           AND gw.season = $season
           AND r.minutes > 0
+        MATCH (f)-[:HAS_HOME_TEAM|HAS_AWAY_TEAM]->(t:Team)
         WITH p.player_name AS player_name,
              r.position AS position,
+             t.name AS team_name,
              SUM(r.total_points) AS total_points,
              SUM(r.goals_scored) AS goals,
              SUM(r.assists) AS assists,
-             AVG(r.value) / 10.0 AS price,
-             COUNT(DISTINCT f) AS games_played
+             COUNT(DISTINCT f) AS games_played,
+             COUNT(t) AS team_count
         WHERE total_points >= $min_points
           AND games_played >= $min_games
-          AND price IS NOT NULL
-        WITH position, player_name, total_points, goals, assists, price,
-             toFloat(total_points) / (price * 10.0) AS value_ratio
-        ORDER BY position, value_ratio DESC
+        WITH player_name, position, COLLECT(team_name)[0] AS most_common_team,
+             total_points, goals, assists, games_played,
+             CASE 
+                WHEN total_points >= 250 THEN 10.0
+                WHEN total_points >= 200 THEN 9.0
+                WHEN total_points >= 170 THEN 7.5
+                WHEN total_points >= 140 THEN 6.0
+                WHEN total_points >= 100 THEN 5.0
+                WHEN total_points >= 70 THEN 4.5
+                ELSE 4.0
+             END AS estimated_price
+        WITH position, player_name, most_common_team, total_points, goals, assists, 
+             estimated_price,
+             toFloat(total_points) / (estimated_price * 10.0) AS value_ratio
+        ORDER BY position, total_points DESC
         
         WITH position, COLLECT({
             player: player_name,
+            team: most_common_team,
             total_points: total_points,
             goals: goals,
             assists: assists,
-            price: price,
+            price: estimated_price,
             value_ratio: value_ratio
         }) AS players_by_position
         
@@ -730,17 +915,56 @@ class BaselineRetriever:
             'FWD': 3
         }
         
-        # Greedy selection - pick best value ratio players per position
+        # Smart budget-aware selection to ensure exactly 15 players under budget
+        # Target: Use £99-100m of the budget for competitive squads
         selected_squad = []
         total_cost = 0.0
         total_points = 0
         
-        for pos, count in formation.items():
+        # Calculate target spending per position to maximize budget usage
+        total_players_needed = sum(formation.values())  # 15
+        target_budget = budget - 1.0  # Target £99m to leave £1m buffer
+        avg_budget_per_player = target_budget / total_players_needed  # ~6.6m
+        
+        # Minimum prices to ensure we can complete the squad
+        min_price_by_pos = {
+            'GK': 4.0,
+            'DEF': 4.0,
+            'MID': 4.0,
+            'FWD': 4.0
+        }
+        
+        # Target prices per position to aim for £99m total
+        target_price_by_pos = {
+            'GK': 5.5,   # 2 GKs = £11m
+            'DEF': 6.0,  # 5 DEFs = £30m
+            'MID': 7.0,  # 5 MIDs = £35m
+            'FWD': 7.5   # 3 FWDs = £22.5m (Total = £98.5m)
+        }
+        
+        # First pass: Fill positions while maximizing budget usage
+        positions_order = ['GK', 'DEF', 'MID', 'FWD']
+        
+        for pos in positions_order:
+            count = formation[pos]
             if pos not in players_by_pos:
                 continue
                 
-            available = players_by_pos[pos]
+            available = players_by_pos[pos].copy()
+            
+            # If randomizing, shuffle top candidates for variety
+            if randomize and len(available) > 30:
+                top_candidates = available[:30]
+                random.shuffle(top_candidates)
+                remaining = available[30:]
+                available = top_candidates + remaining
+            
             selected = 0
+            target_price = target_price_by_pos.get(pos, avg_budget_per_player)
+            
+            # Calculate how much budget we should reserve for remaining players
+            remaining_positions_after_this = sum([formation[p] for p in positions_order[positions_order.index(pos)+1:]])
+            reserved_budget = remaining_positions_after_this * min_price_by_pos.get(pos, 4.0)
             
             for player_data in available:
                 if selected >= count:
@@ -748,10 +972,22 @@ class BaselineRetriever:
                     
                 player_price = player_data['price']
                 
-                # Check if adding this player keeps us under budget
-                if total_cost + player_price <= budget:
+                # Calculate remaining slots to fill after this player
+                remaining_slots = total_players_needed - len(selected_squad) - 1
+                
+                # Make sure we have enough budget for remaining players
+                if remaining_slots > 0:
+                    reserved_for_remaining = remaining_slots * min_price_by_pos.get(pos, 4.0)
+                    max_can_spend = budget - total_cost - reserved_for_remaining
+                else:
+                    max_can_spend = budget - total_cost
+                
+                # Prefer players close to target price for better budget utilization
+                # But still accept any player within budget constraints
+                if player_price <= max_can_spend and total_cost + player_price <= budget:
                     selected_squad.append({
                         'player_name': player_data['player'],
+                        'team': player_data.get('team', 'Unknown'),
                         'position': pos,
                         'price': player_price,
                         'total_points': player_data['total_points'],
@@ -762,6 +998,99 @@ class BaselineRetriever:
                     total_cost += player_price
                     total_points += player_data['total_points']
                     selected += 1
+        
+        # Upgrade pass: If we have budget left and squad is complete, try to upgrade players
+        if len(selected_squad) == 15 and total_cost < target_budget:
+            remaining_budget = budget - total_cost
+            
+            # Try to upgrade each position if budget allows
+            for pos in positions_order:
+                if remaining_budget < 0.5:  # Less than £0.5m left
+                    break
+                    
+                current_players = [p for p in selected_squad if p['position'] == pos]
+                if not current_players:
+                    continue
+                
+                # Find the cheapest player in this position
+                cheapest = min(current_players, key=lambda x: x['price'])
+                cheapest_idx = selected_squad.index(cheapest)
+                
+                # Try to find a better player we can afford
+                available = players_by_pos.get(pos, [])
+                for player_data in available:
+                    # Skip if already in squad
+                    if player_data['player'] in [p['player_name'] for p in selected_squad]:
+                        continue
+                    
+                    upgrade_cost = player_data['price'] - cheapest['price']
+                    
+                    # If this is an upgrade and we can afford it
+                    if upgrade_cost > 0 and upgrade_cost <= remaining_budget and player_data['total_points'] > cheapest['total_points']:
+                        # Replace the player
+                        selected_squad[cheapest_idx] = {
+                            'player_name': player_data['player'],
+                            'team': player_data.get('team', 'Unknown'),
+                            'position': pos,
+                            'price': player_data['price'],
+                            'total_points': player_data['total_points'],
+                            'goals': player_data['goals'],
+                            'assists': player_data['assists'],
+                            'value_ratio': player_data['value_ratio']
+                        }
+                        total_cost += upgrade_cost
+                        total_points += (player_data['total_points'] - cheapest['total_points'])
+                        remaining_budget -= upgrade_cost
+                        break  # Move to next position
+        
+        # Second pass: If we still don't have 15 players, aggressively find cheapest options
+        max_iterations = 3
+        iteration = 0
+        
+        while len(selected_squad) < 15 and iteration < max_iterations:
+            iteration += 1
+            
+            for pos, count in formation.items():
+                if len(selected_squad) >= 15:
+                    break
+                    
+                if pos not in players_by_pos:
+                    continue
+                
+                current_count = len([p for p in selected_squad if p['position'] == pos])
+                needed = count - current_count
+                
+                if needed > 0:
+                    available = players_by_pos[pos]
+                    # Sort by price ascending to find cheapest players
+                    available_sorted = sorted(available, key=lambda x: x['price'])
+                    
+                    for player_data in available_sorted:
+                        if needed == 0 or len(selected_squad) >= 15:
+                            break
+                        
+                        # Skip already selected players
+                        if player_data['player'] in [p['player_name'] for p in selected_squad]:
+                            continue
+                        
+                        player_price = player_data['price']
+                        remaining_budget = budget - total_cost
+                        
+                        # Only add if we can afford it
+                        if player_price <= remaining_budget:
+                            selected_squad.append({
+                                'player_name': player_data['player'],
+                                'team': player_data.get('team', 'Unknown'),
+                                'position': pos,
+                                'price': player_price,
+                                'total_points': player_data['total_points'],
+                                'goals': player_data['goals'],
+                                'assists': player_data['assists'],
+                                'value_ratio': player_data['value_ratio']
+                            })
+                            total_cost += player_price
+                            total_points += player_data['total_points']
+                            needed -= 1
         
         return {
             'squad': selected_squad,

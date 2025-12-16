@@ -340,7 +340,7 @@ def render_live_dashboard(driver, database):
                 top_players_result = session.run("""
                     MATCH (p:Player)-[r:PLAYED_IN]->(s:Season {name: '2022-23'})
                     WHERE r.total_points IS NOT NULL
-                    RETURN p.name as name, p.team_name as team, 
+                    RETURN p.name as name, p.team as team, 
                            r.total_points as total_points
                     ORDER BY r.total_points DESC
                     LIMIT 10

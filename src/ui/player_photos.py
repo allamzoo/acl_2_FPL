@@ -120,12 +120,42 @@ def find_player_in_fpl_data(player_name, players_list):
     return best_match, best_score
 
 
+def normalize_player_name(player_name):
+    """Normalize player names to match FPL API naming conventions."""
+    # Common name variations for goalkeepers and other players
+    name_mappings = {
+        'Alisson Ramses Becker': 'Alisson',
+        'Adrián San Miguel del Castillo': 'Adrián',
+        'David Raya Martin': 'David Raya',
+        'Ederson Santana de Moraes': 'Ederson',
+        'Emiliano Martínez Romero': 'Emiliano Martínez',
+        'Bernd Leno': 'Bernd Leno',
+        'Kepa Arrizabalaga': 'Kepa',
+    }
+    
+    # Check if we have a direct mapping
+    if player_name in name_mappings:
+        return name_mappings[player_name]
+    
+    # For Spanish/Portuguese names with multiple parts, try using first + last
+    parts = player_name.split()
+    if len(parts) > 3:
+        # Try first name + last name (skip middle names)
+        simplified = f"{parts[0]} {parts[-1]}"
+        return simplified
+    
+    return player_name
+
+
 def find_player_photo(player_name):
     """Find player photo URL from FPL API, searching current and historical seasons."""
     try:
+        # Normalize the player name first
+        normalized_name = normalize_player_name(player_name)
+        
         # First, try current season
         current_players = get_fpl_players()
-        best_match, best_score = find_player_in_fpl_data(player_name, current_players)
+        best_match, best_score = find_player_in_fpl_data(normalized_name, current_players)
         
         # If we have a good match in current season (score >= 60)
         if best_match and best_score >= 60:
@@ -143,7 +173,7 @@ def find_player_photo(player_name):
                     logger.debug(f"Photo verification failed for code {player_code}: {e}")
         
         # If not found in current season, try historical seasons from GitHub archive
-        logger.info(f"🔍 '{player_name}' not in current season (score: {best_score}), searching archives...")
+        logger.info(f"🔍 '{normalized_name}' (original: '{player_name}') not in current season (score: {best_score}), searching archives...")
         
         # Go back through recent seasons
         seasons_to_try = [
@@ -165,7 +195,7 @@ def find_player_photo(player_name):
                     continue
                 
                 logger.debug(f"  ✓ Got {len(historical_players)} players from {season_str}")
-                hist_match, hist_score = find_player_in_fpl_data(player_name, historical_players)
+                hist_match, hist_score = find_player_in_fpl_data(normalized_name, historical_players)
                 
                 if hist_match and hist_score >= 60:
                     player_code = hist_match.get('code')

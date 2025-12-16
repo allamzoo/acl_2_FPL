@@ -46,7 +46,7 @@ from src.ui.stats_viz import (
     create_value_analysis_scatter
 )
 from src.ui.player_comparison import render_player_comparison_ui, compare_players
-from src.ui.live_dashboard import render_live_dashboard
+from src.ui.squad_builder import render_squad_builder
 
 logger = logging.getLogger(__name__)
 
@@ -1263,11 +1263,63 @@ def process_query(query: str, config: dict):
                 retrieval_mode=retrieval_mode
             )
             
+            # Capture executed Cypher queries from baseline retriever
+            executed_queries = []
+            graph_data = {'nodes': [], 'relationships': []}
+            if hasattr(retriever, 'baseline') and hasattr(retriever.baseline, 'get_executed_queries'):
+                executed_queries = retriever.baseline.get_executed_queries()
+                # Try to get graph data from executed queries first
+                graph_data = retriever.baseline.get_combined_graph_data()
+                
+                if config.get('show_debug', False):
+                    st.write(f"🔍 Debug - Combined graph data from queries: {len(graph_data.get('nodes', []))} nodes, {len(graph_data.get('relationships', []))} relationships")
+                
+                # If no graph data from regular queries, create it from the player results
+                # Check both unified_players and the baseline results
+                player_data = retrieval_result.get('unified_players', []) or retrieval_result.get('baseline_results', {}).get('results', [])
+                
+                if config.get('show_debug', False):
+                    st.write(f"🔍 Debug - Player data available: {len(player_data)} items")
+                
+                if not graph_data['nodes'] and not graph_data['relationships'] and player_data:
+                    # Extract player names from results
+                    player_names = []
+                    for p in player_data[:10]:
+                        # Try different possible name fields
+                        name = (p.get('player_name') or p.get('name') or 
+                               p.get('web_name') or p.get('player', ''))
+                        if name:
+                            player_names.append(name)
+                    
+                    if config.get('show_debug', False):
+                        st.write(f"🔍 Debug - Attempting to get graph for {len(player_names)} players: {player_names[:3]}")
+                    
+                    if player_names and hasattr(retriever.baseline, 'get_graph_for_visualization'):
+                        try:
+                            graph_data = retriever.baseline.get_graph_for_visualization(
+                                player_names, 
+                                season=actual_season
+                            )
+                            if config.get('show_debug', False):
+                                st.write(f"🔍 Debug - Graph data retrieved: {len(graph_data.get('nodes', []))} nodes, {len(graph_data.get('relationships', []))} relationships")
+                        except Exception as viz_error:
+                            if config.get('show_debug', False):
+                                st.error(f"Graph visualization error: {viz_error}")
+                                import traceback
+                                st.code(traceback.format_exc())
+            elif hasattr(retriever, 'get_executed_queries'):
+                executed_queries = retriever.get_executed_queries()
+                if hasattr(retriever, 'get_combined_graph_data'):
+                    graph_data = retriever.get_combined_graph_data()
+            
             # Debug: Show retrieval info
             if config.get('show_debug', False):
                 st.write(f"🔍 Debug - Retrieval Mode: {retrieval_mode}")
                 st.write(f"🔍 Intent: {retrieval_result.get('intent_enum', 'N/A')} (confidence: {retrieval_result.get('intent_confidence', 0):.2f})")
-                st.write(f"🔍 Retrieved {len(retrieval_result.get('unified_players', []))} players")
+                st.write(f"🔍 Retrieved {len(retrieval_result.get('unified_players', []))} unified_players")
+                if retrieval_result.get('unified_players'):
+                    st.write(f"🔍 First player keys: {list(retrieval_result['unified_players'][0].keys())}")
+                st.write(f"🔍 Baseline results: {len(retrieval_result.get('baseline_results', {}).get('results', []))} items")
             
             # If no data retrieved, show warning
             if not retrieval_result.get('unified_players'):
@@ -1317,6 +1369,8 @@ def process_query(query: str, config: dict):
                 'backend': llm_response.get('backend', 'unknown'),
                 'season': actual_season,
                 'cypher_query': '',
+                'executed_queries': executed_queries,  # Add executed queries
+                'graph_data': graph_data,  # Add graph visualization data
                 'llm_result': llm_response,
                 'retrieval_details': retrieval_result,
                 'context_info': context_info,
@@ -1544,56 +1598,45 @@ def render_results(results: dict, config: dict):
                     is_generated_avatar = photo_url and 'ui-avatars.com' in photo_url
                     
                     # Build stats badges HTML
-                    stats_badges = f'''<span style="background: linear-gradient(135deg, #e90052 0%, #ff4081 100%); 
-                                 color: white; padding: 0.4rem 0.8rem; border-radius: 12px; 
-                                 font-size: 0.85rem; font-weight: 600;
-                                 box-shadow: 0 2px 8px rgba(233, 0, 82, 0.3);">⚽ {goals}</span>
-                        <span style="background: linear-gradient(135deg, #3949ab 0%, #5e35b1 100%); 
-                                 color: white; padding: 0.4rem 0.8rem; border-radius: 12px; 
-                                 font-size: 0.85rem; font-weight: 600;
-                                 box-shadow: 0 2px 8px rgba(57, 73, 171, 0.3);">🎯 {assists}</span>'''
+                    stats_badges = f'<span style="background: linear-gradient(135deg, #e90052 0%, #ff4081 100%); color: white; padding: 0.4rem 0.8rem; border-radius: 12px; font-size: 0.85rem; font-weight: 600; box-shadow: 0 2px 8px rgba(233, 0, 82, 0.3);">⚽ {goals}</span>'
+                    stats_badges += f'<span style="background: linear-gradient(135deg, #3949ab 0%, #5e35b1 100%); color: white; padding: 0.4rem 0.8rem; border-radius: 12px; font-size: 0.85rem; font-weight: 600; box-shadow: 0 2px 8px rgba(57, 73, 171, 0.3);">🎯 {assists}</span>'
                     
                     if clean_sheets > 0:
-                        stats_badges += f'''
-                        <span style="background: linear-gradient(135deg, #00ff87 0%, #00d9a8 100%); 
-                                 color: #37003c; padding: 0.4rem 0.8rem; border-radius: 12px; 
-                                 font-size: 0.85rem; font-weight: 600;
-                                 box-shadow: 0 2px 8px rgba(0, 255, 135, 0.3);">🛡️ {clean_sheets}</span>'''
+                        stats_badges += f'<span style="background: linear-gradient(135deg, #00ff87 0%, #00d9a8 100%); color: #37003c; padding: 0.4rem 0.8rem; border-radius: 12px; font-size: 0.85rem; font-weight: 600; box-shadow: 0 2px 8px rgba(0, 255, 135, 0.3);">🛡️ {clean_sheets}</span>'
                     
                     # Create player card
-                    st.markdown(f"""
-                    <div class="player-card" style="animation: fadeIn {0.6 + idx*0.2}s ease-out; 
-                         box-shadow: 0 4px 20px rgba(0, 255, 135, 0.3);
-                         border: 1px solid rgba(0, 255, 135, 0.2);
-                         transition: all 0.3s ease;
-                         text-align: center;">
-                        <div style="margin-bottom: 1rem;">
-                            <img src="{photo_url}" 
-                                 alt="{player_name}"
-                                 style="width: 110px; height: 140px; 
-                                        border-radius: {'50%' if is_generated_avatar else '12px'}; 
-                                        border: 3px solid rgba(0, 255, 135, 0.4);
-                                        box-shadow: 0 4px 15px rgba(0, 255, 135, 0.3);
-                                        object-fit: cover;"
-                                 onerror="this.onerror=null; this.src='https://ui-avatars.com/api/?name={player_name.replace(' ', '+')}&size=140&background=37003c&color=00ff87&bold=true&font-size=0.4&rounded=true';">
-                        </div>
-                        <h4 style="margin: 0; color: #37003c; font-size: 1.2rem; font-weight: 700;">{player_name}</h4>
-                        <p style="margin: 0.5rem 0; color: #6c757d; font-size: 0.9rem; font-weight: 500;">{info_text}</p>
-                        <div style="margin-top: 1rem; display: flex; gap: 0.75rem; flex-wrap: wrap; justify-content: center;">
-                            {stats_badges}
-                        </div>
-                    </div>
-                    """, unsafe_allow_html=True)
+                    # Build team and position display
+                    team_html = ''
+                    if team:
+                        team_html = f'<div style="background: linear-gradient(135deg, #37003c 0%, #580064 100%); color: #00ff87; padding: 0.3rem 0.8rem; border-radius: 20px; font-size: 0.8rem; font-weight: 700; display: inline-block; margin-bottom: 0.5rem; box-shadow: 0 2px 8px rgba(55, 0, 60, 0.4); border: 1px solid rgba(0, 255, 135, 0.3);">⚽ {team}</div>'
+                    
+                    position_html = ''
+                    if position:
+                        position_html = f'<span style="background: rgba(108, 117, 125, 0.15); color: #37003c; padding: 0.2rem 0.6rem; border-radius: 12px; font-size: 0.75rem; font-weight: 600;">{position}</span>'
+                    
+                    border_radius = '50%' if is_generated_avatar else '12px'
+                    
+                    # Build complete HTML string
+                    player_card_html = f'<div class="player-card" style="animation: fadeIn {0.6 + idx*0.2}s ease-out; box-shadow: 0 4px 20px rgba(0, 255, 135, 0.3); border: 1px solid rgba(0, 255, 135, 0.2); transition: all 0.3s ease; text-align: center;">'
+                    player_card_html += f'<div style="margin-bottom: 0.8rem;"><img src="{photo_url}" alt="{player_name}" style="width: 110px; height: 140px; border-radius: {border_radius}; border: 3px solid rgba(0, 255, 135, 0.4); box-shadow: 0 4px 15px rgba(0, 255, 135, 0.3); object-fit: cover;" onerror="this.onerror=null; this.src=\'https://ui-avatars.com/api/?name={player_name.replace(" ", "+")}&size=140&background=37003c&color=00ff87&bold=true&font-size=0.4&rounded=true\';"></div>'
+                    player_card_html += f'<h4 style="margin: 0 0 0.5rem 0; color: #37003c; font-size: 1.2rem; font-weight: 700;">{player_name}</h4>'
+                    player_card_html += team_html
+                    player_card_html += f'<div style="margin: 0.3rem 0;">{position_html}</div>'
+                    player_card_html += f'<div style="margin-top: 1rem; display: flex; gap: 0.75rem; flex-wrap: wrap; justify-content: center;">{stats_badges}</div>'
+                    player_card_html += '</div>'
+                    
+                    st.markdown(player_card_html, unsafe_allow_html=True)
     
     # Detailed information in tabs (conditional based on settings)
-    tabs = ["📋 Context", "🔍 Analysis"]
+    tabs = ["📋 Context", "🔍 Analysis", "💻 Cypher Queries"]
     if config.get('show_debug', False):
         tabs.append("⚙️ Debug")
     
     tab_objects = st.tabs(tabs)
     tab1 = tab_objects[0]
     tab2 = tab_objects[1]
-    tab3 = tab_objects[2] if len(tab_objects) > 2 else None
+    tab3 = tab_objects[2]
+    tab4 = tab_objects[3] if len(tab_objects) > 3 else None
     
     with tab1:
         st.markdown("**Retrieved Context:**")
@@ -1601,6 +1644,56 @@ def render_results(results: dict, config: dict):
             st.json(results['context'])
         else:
             st.info("No context retrieved")
+        
+        # Add graph visualization
+        st.markdown("---")
+        st.markdown("**📊 Knowledge Graph Visualization:**")
+        st.markdown("Interactive visualization of nodes and relationships retrieved from the knowledge graph.")
+        
+        graph_data = results.get('graph_data', {})
+        nodes = graph_data.get('nodes', []) if isinstance(graph_data, dict) else []
+        relationships = graph_data.get('relationships', []) if isinstance(graph_data, dict) else []
+        
+        # Debug info - always show for now to understand the issue
+        st.write(f"🔍 Debug - Graph data type: {type(graph_data)}")
+        st.write(f"🔍 Debug - Nodes: {len(nodes)}, Relationships: {len(relationships)}")
+        if nodes:
+            st.write(f"🔍 Debug - First node: {type(nodes[0])}")
+            st.write(f"🔍 Debug - First node properties: {dict(nodes[0]) if hasattr(nodes[0], '__iter__') else 'N/A'}")
+        if config.get('show_debug', False):
+            st.write(f"🔍 Debug - Full graph_data keys: {list(graph_data.keys()) if isinstance(graph_data, dict) else 'Not a dict'}")
+        
+        if nodes or relationships:
+            # Show graph stats
+            col1, col2 = st.columns(2)
+            with col1:
+                st.metric("Nodes Retrieved", len(nodes))
+            with col2:
+                st.metric("Relationships", len(relationships))
+            
+            # Create mock records for the graph_viz function
+            from src.ui.graph_viz import create_network_graph
+            import streamlit.components.v1 as components
+            
+            try:
+                # Generate and display the graph
+                html = create_network_graph(
+                    {'nodes': nodes, 'relationships': relationships}, 
+                    height='500px', 
+                    width='100%'
+                )
+                components.html(html, height=520, scrolling=False)
+            except Exception as e:
+                st.error(f"Could not render graph: {str(e)}")
+                if config.get('show_debug', False):
+                    import traceback
+                    st.code(traceback.format_exc())
+        else:
+            st.info("No graph data available for visualization.")
+            if config.get('show_debug', False):
+                st.write("💡 **Tip:** Graph visualization requires player data from the query results.")
+                if results.get('context'):
+                    st.write(f"Context has {len(results['context'])} items but no graph structure was captured.")
     
     with tab2:
         col1, col2 = st.columns(2)
@@ -1632,8 +1725,48 @@ def render_results(results: dict, config: dict):
             else:
                 st.write("No entities extracted")
     
-    if tab3:
-        with tab3:
+    with tab3:
+        st.markdown("### 💻 Executed Cypher Queries")
+        st.markdown("These are the actual Neo4j queries that were executed to retrieve information from the knowledge graph.")
+        
+        executed_queries = results.get('executed_queries', [])
+        
+        if executed_queries:
+            for idx, query_info in enumerate(executed_queries, 1):
+                with st.expander(f"Query #{idx} - Retrieved {query_info.get('result_count', 0)} records", expanded=(idx==1)):
+                    # Show query
+                    st.markdown("**Cypher Query:**")
+                    st.code(query_info.get('query', ''), language='cypher')
+                    
+                    # Show parameters
+                    st.markdown("**Parameters:**")
+                    params = query_info.get('parameters', {})
+                    if params:
+                        param_text = "\\n".join([f"  {k}: {v}" for k, v in params.items()])
+                        st.code(param_text, language='python')
+                    else:
+                        st.text("No parameters")
+                    
+                    # Show results
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        result_count = query_info.get('result_count', 0)
+                        if 'error' in query_info:
+                            st.error(f"❌ Error: {query_info['error']}")
+                        else:
+                            st.success(f"✅ Retrieved {result_count} records")
+                    
+                    with col2:
+                        import datetime
+                        timestamp = query_info.get('timestamp', 0)
+                        if timestamp:
+                            dt = datetime.datetime.fromtimestamp(timestamp)
+                            st.text(f"Executed: {dt.strftime('%H:%M:%S')}")
+        else:
+            st.info("No Cypher queries were executed for this request.")
+    
+    if tab4:
+        with tab4:
             st.markdown("**Retrieval Configuration:**")
             col1, col2 = st.columns(2)
             with col1:
@@ -1698,39 +1831,23 @@ def main():
     config = render_sidebar()
     
     # Main tabs
-    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+    tab1, tab2, tab3 = st.tabs([
         "💬 Chat Assistant",
-        "📈 Live Dashboard",
-        "🔄 Player Comparison",
-        "📊 Advanced Analytics",
-        "🌐 Graph Explorer",
-        "⚙️ Settings & Export"
+        "⚽ Squad Builder",
+        "🔄 Player Comparison"
     ])
     
     # Tab 1: Chat Assistant (Original functionality)
     with tab1:
         render_chat_interface(config)
     
-    # Tab 2: Live Dashboard
+    # Tab 2: Squad Builder
     with tab2:
-        with GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USERNAME, NEO4J_PASSWORD)) as driver:
-            render_live_dashboard(driver, NEO4J_DATABASE)
+        render_squad_builder()
     
     # Tab 3: Player Comparison
     with tab3:
         render_player_comparison_tab(config)
-    
-    # Tab 4: Advanced Analytics
-    with tab4:
-        render_analytics_tab(config)
-    
-    # Tab 5: Graph Explorer
-    with tab5:
-        render_graph_explorer_tab(config)
-    
-    # Tab 6: Settings & Export
-    with tab6:
-        render_settings_export_tab()
 
 
 def render_chat_interface(config):
@@ -1789,13 +1906,14 @@ def render_chat_interface(config):
     elif search_button:
         st.warning("⚠️ Please enter a question first!")
     
-    # Query history
-    if st.session_state.query_history:
+    # Query history (skip the first one since it's already displayed above)
+    if len(st.session_state.query_history) > 1:
         st.markdown("---")
         st.markdown("### 📜 Recent Queries")
         
-        for i, item in enumerate(st.session_state.query_history[:5]):
-            with st.expander(f"🔹 {item['query']}", expanded=(i == 0)):
+        # Start from index 1 to skip the most recent query (already shown)
+        for i, item in enumerate(st.session_state.query_history[1:6], start=1):
+            with st.expander(f"🔹 {item['query']}", expanded=False):
                 render_results(item['results'], config)
 
 
@@ -1851,239 +1969,6 @@ def render_player_comparison_tab(config):
         ]
         
         compare_players(sample_players)
-
-
-def render_analytics_tab(config):
-    """Render the advanced analytics tab."""
-    st.markdown("### 📊 Advanced Analytics")
-    
-    # Analysis type selector
-    analysis_type = st.selectbox(
-        "Select Analysis Type",
-        ["Top Performers by Metric", "Position Distribution", "Value Analysis", "Team Performance"]
-    )
-    
-    if analysis_type == "Top Performers by Metric":
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            metric = st.selectbox(
-                "Select Metric",
-                ["goals", "assists", "total_points", "clean_sheets", "bonus"]
-            )
-        with col2:
-            season = st.selectbox("Season", ["2022-23", "2021-22", "2020-21"])
-        with col3:
-            top_n = st.number_input("Number of Players", 5, 50, 10)
-        
-        if st.button("🔍 Analyze", use_container_width=True):
-            with st.spinner("Loading data..."):
-                with GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USERNAME, NEO4J_PASSWORD)) as driver:
-                    with driver.session(database=NEO4J_DATABASE) as session:
-                        query = f"""
-                        MATCH (p:Player)-[r:PLAYED_IN]->(s:Season {{name: $season}})
-                        WHERE r.{metric} IS NOT NULL
-                        RETURN p.name as name, p.team_name as team, p.position as position, 
-                               r.{metric} as value
-                        ORDER BY r.{metric} DESC
-                        LIMIT $limit
-                        """
-                        result = session.run(query, season=season, limit=top_n)
-                        data = [dict(record) for record in result]
-                
-                if data:
-                    # Create dataframe
-                    df = pd.DataFrame(data)
-                    df.columns = ['name', 'team', 'position', metric]
-                    
-                    # Create bar chart
-                    fig = create_player_comparison_chart(data, metric=metric, chart_type='bar')
-                    if fig:
-                        st.plotly_chart(fig, use_container_width=True)
-                    
-                    # Display table
-                    st.dataframe(df, use_container_width=True)
-                else:
-                    st.warning("No data found for the selected criteria.")
-    
-    elif analysis_type == "Position Distribution":
-        season = st.selectbox("Season", ["2022-23", "2021-22", "2020-21"])
-        
-        if st.button("🔍 Analyze", use_container_width=True):
-            with st.spinner("Loading data..."):
-                with GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USERNAME, NEO4J_PASSWORD)) as driver:
-                    with driver.session(database=NEO4J_DATABASE) as session:
-                        query = """
-                        MATCH (p:Player)-[:PLAYED_IN]->(s:Season {name: $season})
-                        RETURN p.position as position, count(p) as count
-                        """
-                        result = session.run(query, season=season)
-                        data = [{'position': r['position'], 'count': r['count']} for r in result]
-                
-                if data:
-                    fig = create_position_distribution(data)
-                    if fig:
-                        st.plotly_chart(fig, use_container_width=True)
-                else:
-                    st.warning("No data found.")
-
-
-def render_graph_explorer_tab(config):
-    """Render the graph explorer tab."""
-    st.markdown("### 🌐 Interactive Graph Explorer")
-    
-    query_type = st.selectbox(
-        "Select Query Type",
-        ["Player Connections", "Team Network", "Custom Cypher Query"]
-    )
-    
-    if query_type == "Player Connections":
-        player_name = st.text_input("Enter Player Name", "Erling Haaland")
-        depth = st.slider("Connection Depth", 1, 3, 1)
-        
-        if st.button("🔍 Explore Connections"):
-            with st.spinner("Fetching graph data..."):
-                with GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USERNAME, NEO4J_PASSWORD)) as driver:
-                    with driver.session(database=NEO4J_DATABASE) as session:
-                        query = """
-                        MATCH path = (p:Player {name: $name})-[*1..%d]-(connected)
-                        RETURN path
-                        LIMIT 50
-                        """ % depth
-                        
-                        result = session.run(query, name=player_name)
-                        neo4j_results = list(result)
-                
-                if neo4j_results:
-                    render_graph(neo4j_results, height='700px')
-                    st.success(f"✅ Found {len(neo4j_results)} connections for {player_name}")
-                else:
-                    st.warning(f"No connections found for {player_name}")
-    
-    elif query_type == "Custom Cypher Query":
-        st.markdown("#### Execute Custom Cypher Query")
-        cypher_query = st.text_area(
-            "Enter Cypher Query",
-            value="MATCH (p:Player)-[r:PLAYED_IN]->(s:Season) RETURN p, r, s LIMIT 25",
-            height=150
-        )
-        
-        if st.button("▶️ Execute"):
-            with st.spinner("Executing query..."):
-                with GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USERNAME, NEO4J_PASSWORD)) as driver:
-                    with driver.session(database=NEO4J_DATABASE) as session:
-                        try:
-                            result = session.run(cypher_query)
-                            neo4j_results = list(result)
-                            
-                            if neo4j_results:
-                                render_graph(neo4j_results, height='700px')
-                                st.success(f"✅ Retrieved {len(neo4j_results)} records")
-                            else:
-                                st.info("Query returned no results")
-                        except Exception as e:
-                            st.error(f"Query error: {str(e)}")
-
-
-def render_settings_export_tab():
-    """Render the settings and export tab."""
-    st.markdown("### ⚙️ Settings & Export")
-    
-    # Export section
-    st.markdown("#### 📤 Export Data")
-    
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        export_format = st.selectbox(
-            "Export Format",
-            ["JSON", "CSV", "Excel"]
-        )
-    
-    with col2:
-        st.markdown("<br>", unsafe_allow_html=True)  # Spacing
-        if st.button("📥 Export Query History", use_container_width=True):
-            if st.session_state.query_history:
-                # Prepare export data
-                export_data = []
-                for item in st.session_state.query_history:
-                    export_data.append({
-                        'query': item['query'],
-                        'timestamp': time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(item['timestamp'])),
-                        'results_summary': str(item['results'])[:200]
-                    })
-                
-                if export_format == "JSON":
-                    json_str = json.dumps(export_data, indent=2)
-                    st.download_button(
-                        label="Download JSON",
-                        data=json_str,
-                        file_name=f"fpl_query_history_{int(time.time())}.json",
-                        mime="application/json"
-                    )
-                
-                elif export_format == "CSV":
-                    df = pd.DataFrame(export_data)
-                    csv = df.to_csv(index=False)
-                    st.download_button(
-                        label="Download CSV",
-                        data=csv,
-                        file_name=f"fpl_query_history_{int(time.time())}.csv",
-                        mime="text/csv"
-                    )
-                
-                elif export_format == "Excel":
-                    df = pd.DataFrame(export_data)
-                    # Use xlsxwriter engine
-                    from io import BytesIO
-                    output = BytesIO()
-                    with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                        df.to_excel(writer, index=False, sheet_name='Query History')
-                    output.seek(0)
-                    
-                    st.download_button(
-                        label="Download Excel",
-                        data=output,
-                        file_name=f"fpl_query_history_{int(time.time())}.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                    )
-            else:
-                st.warning("No query history to export.")
-    
-    st.markdown("---")
-    
-    # Cache management
-    st.markdown("#### 🗄️ Cache Management")
-    
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        if st.button("🔄 Clear Cache", use_container_width=True):
-            st.cache_data.clear()
-            st.success("✅ Cache cleared successfully!")
-    
-    with col2:
-        if st.button("🔁 Reset Session", use_container_width=True):
-            for key in list(st.session_state.keys()):
-                del st.session_state[key]
-            st.success("✅ Session reset successfully!")
-            st.rerun()
-    
-    st.markdown("---")
-    
-    # App info
-    st.markdown("#### ℹ️ Application Info")
-    st.info("""
-    **FPL Knowledge Graph Assistant v2.0**
-    
-    Enhanced with:
-    - 📈 Live Metrics Dashboard
-    - 🔄 Player Comparison Tool
-    - 📊 Advanced Analytics
-    - 🌐 Interactive Graph Explorer
-    - 📤 Data Export (JSON/CSV/Excel)
-    
-    Built with Streamlit, Neo4j, and Plotly
-    """)
 
 
 if __name__ == "__main__":

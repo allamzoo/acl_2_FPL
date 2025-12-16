@@ -6,13 +6,14 @@ Advanced player comparison with side-by-side stats and visualizations.
 
 import streamlit as st
 import pandas as pd
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 import logging
 from .stats_viz import (
     create_player_stats_radar,
     create_multi_metric_comparison,
     create_value_analysis_scatter
 )
+from src.retrieval.baseline_retriever import BaselineRetriever
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +25,87 @@ FPL_COLORS = {
     'blue': '#3949ab',
     'orange': '#ff9800',
 }
+
+
+def fetch_player_data(player_name: str, season: str = "2022-23") -> Optional[Dict[str, Any]]:
+    """
+    Fetch player data from Neo4j database.
+    
+    Args:
+        player_name: Player name to search for
+        season: Season to get stats from (default: 2022-23)
+        
+    Returns:
+        Player data dictionary or None if not found
+    """
+    try:
+        retriever = BaselineRetriever()
+        
+        # Capitalize first letter of each word for better matching
+        player_name = player_name.title()
+        
+        # Get player season stats
+        results = retriever.get_player_season_stats(player_name, season)
+        
+        if results and len(results) > 0:
+            player_data = results[0]
+            
+            # Ensure this is a dictionary
+            if not isinstance(player_data, dict):
+                logger.error(f"Invalid player data type: {type(player_data)}")
+                retriever.close()
+                return None
+            
+            # Log the retrieved data for debugging
+            logger.info(f"Retrieved player data keys: {player_data.keys()}")
+            
+            # Ensure 'name' field exists - map from Neo4j field names
+            if 'name' not in player_data:
+                player_data['name'] = player_data.get('player', player_data.get('player_name', player_name))
+            
+            # Ensure position and team exist
+            if 'position' not in player_data or not player_data['position']:
+                player_data['position'] = 'N/A'
+            
+            if 'team' not in player_data or not player_data['team']:
+                player_data['team'] = 'N/A'
+            
+            # Add field aliases for compatibility with visualization components
+            if 'total_minutes' in player_data and 'minutes' not in player_data:
+                player_data['minutes'] = player_data['total_minutes']
+            
+            # Ensure cost field exists (may not be in season stats)
+            if 'cost' not in player_data:
+                player_data['cost'] = 7.5  # Default placeholder cost
+            
+            # Ensure required fields exist with defaults
+            defaults = {
+                'team': 'Unknown',
+                'position': 'Unknown',
+                'goals': 0,
+                'assists': 0,
+                'total_points': 0,
+                'bonus': 0,
+                'bps': 0,
+                'clean_sheets': 0,
+                'ict_index': 0
+            }
+            
+            for key, default_value in defaults.items():
+                if key not in player_data:
+                    player_data[key] = default_value
+                
+            retriever.close()
+            return player_data
+        
+        retriever.close()
+        return None
+        
+    except Exception as e:
+        logger.error(f"Error fetching player data for {player_name}: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+        return None
 
 
 def render_player_comparison_ui():
@@ -41,6 +123,28 @@ def render_player_comparison_ui():
     # Initialize session state for player comparison
     if 'comparison_players' not in st.session_state:
         st.session_state.comparison_players = []
+    if 'comparison_season' not in st.session_state:
+        st.session_state.comparison_season = "2022-23"
+    
+    # Clean up old string-based data (compatibility fix)
+    if st.session_state.comparison_players:
+        # Filter out any non-dictionary entries
+        valid_players = [p for p in st.session_state.comparison_players if isinstance(p, dict)]
+        if len(valid_players) != len(st.session_state.comparison_players):
+            st.session_state.comparison_players = valid_players
+            if valid_players:
+                st.info("🔄 Cleaned up invalid player data. Valid players retained.")
+            else:
+                st.info("🔄 Player comparison data has been reset. Please add players again.")
+    
+    # Season selector
+    season = st.selectbox(
+        "📅 Select Season",
+        ["2022-23", "2021-22"],
+        key="player_comparison_season_selector"
+    )
+    
+    st.session_state.comparison_season = season
     
     col1, col2 = st.columns([3, 1])
     
@@ -48,36 +152,83 @@ def render_player_comparison_ui():
         player_name = st.text_input(
             "🔍 Search for a player to add",
             placeholder="Enter player name...",
-            label_visibility="collapsed"
+            label_visibility="collapsed",
+            key="player_search_input"
         )
     
     with col2:
         add_button = st.button("➕ Add Player", use_container_width=True)
     
     if add_button and player_name:
-        # Here you would query the database for the player
-        st.session_state.comparison_players.append(player_name)
-        st.success(f"✅ Added {player_name} to comparison!")
+        # Fetch player data from database
+        with st.spinner(f"Searching for {player_name}..."):
+            player_data = fetch_player_data(player_name, st.session_state.comparison_season)
+            
+            if player_data:
+                # Check if player already added
+                player_names = [p.get('name', p.get('player', '')) for p in st.session_state.comparison_players]
+                current_player_name = player_data.get('name', player_data.get('player', ''))
+                
+                if current_player_name in player_names:
+                    st.warning(f"⚠️ {current_player_name} is already in the comparison!")
+                else:
+                    st.session_state.comparison_players.append(player_data)
+                    st.success(f"✅ Added {current_player_name} to comparison!")
+                    st.rerun()
+            else:
+                st.error(f"❌ Player '{player_name}' not found in {st.session_state.comparison_season} season. Try a different name or check spelling.")
     
     # Display current players in comparison
     if st.session_state.comparison_players:
         st.markdown("### 📊 Players in Comparison")
         
-        cols = st.columns(len(st.session_state.comparison_players))
+        # Safety: ensure all players are dictionaries
+        st.session_state.comparison_players = [
+            p for p in st.session_state.comparison_players 
+            if isinstance(p, dict)
+        ]
+        
+        if not st.session_state.comparison_players:
+            st.info("👆 Enter a player name above to start building your comparison.")
+            return
+        
+        cols = st.columns(min(len(st.session_state.comparison_players), 5))
         for i, (col, player) in enumerate(zip(cols, st.session_state.comparison_players)):
             with col:
+                # Safety check: ensure player is a dict (double-check)
+                if not isinstance(player, dict):
+                    logger.error(f"Invalid player data at position {i}: {type(player)}")
+                    continue
+                    
+                player_name = player.get('name', player.get('player', player.get('player_name', 'Unknown')))
+                player_position = player.get('position', 'N/A')
+                player_team = player.get('team', 'N/A')
+                total_points = player.get('total_points', 0)
+                
                 st.markdown(f"""
-                <div class="player-card" style="text-align: center; padding: 1rem;">
-                    <h4 style="margin: 0;">{player}</h4>
+                <div class="player-card" style="text-align: center; padding: 1rem; background: rgba(0,255,135,0.1); border-radius: 8px; border: 2px solid rgba(0,255,135,0.3);">
+                    <h4 style="margin: 0; color: #00ff87;">{player_name}</h4>
+                    <p style="margin: 0.25rem 0; color: #999; font-size: 0.85rem;">{player_position} • {player_team}</p>
+                    <p style="margin: 0; color: #e90052; font-weight: bold; font-size: 1.2rem;">{total_points} pts</p>
                 </div>
                 """, unsafe_allow_html=True)
                 if st.button(f"❌ Remove", key=f"remove_{i}"):
                     st.session_state.comparison_players.pop(i)
                     st.rerun()
         
-        if st.button("🗑️ Clear All", key="clear_all"):
-            st.session_state.comparison_players = []
-            st.rerun()
+        col_a, col_b = st.columns([1, 1])
+        with col_a:
+            if st.button("🗑️ Clear All", key="clear_all", use_container_width=True):
+                st.session_state.comparison_players = []
+                st.rerun()
+        
+        # Actually compare the players if we have at least 2
+        if len(st.session_state.comparison_players) >= 2:
+            compare_players(st.session_state.comparison_players)
+        else:
+            st.info("ℹ️ Add at least one more player to start comparing!")
+    else:
+        st.info("👆 Enter a player name above to start building your comparison.")
 
 
 def compare_players(players_data: List[Dict[str, Any]], comparison_type: str = "stats"):
@@ -223,10 +374,14 @@ def render_value_comparison(players_data: List[Dict[str, Any]]):
     available_cols = [col for col in value_cols if col in df.columns]
     
     if available_cols:
-        sorted_df = df[available_cols].sort_values(
-            'points_per_million', 
-            ascending=False
-        )
+        # Only sort if points_per_million exists
+        if 'points_per_million' in df.columns:
+            sorted_df = df[available_cols].sort_values(
+                'points_per_million', 
+                ascending=False
+            )
+        else:
+            sorted_df = df[available_cols]
         
         # Try to use styling, fallback to simple format if matplotlib not available
         try:

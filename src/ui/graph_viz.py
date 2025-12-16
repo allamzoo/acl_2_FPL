@@ -103,7 +103,14 @@ def create_network_graph(neo4j_results, height='600px', width='100%', physics=Tr
         nodes_added = set()
         
         # Process nodes and relationships from Neo4j results
-        if isinstance(neo4j_results, list):
+        if isinstance(neo4j_results, dict) and 'nodes' in neo4j_results:
+            # Handle our custom format from baseline retriever
+            for node in neo4j_results.get('nodes', []):
+                add_node_to_network(net, node, nodes_added)
+            for rel in neo4j_results.get('relationships', []):
+                add_relationship_to_network(net, rel)
+                
+        elif isinstance(neo4j_results, list):
             for record in neo4j_results:
                 # Handle different result structures
                 if hasattr(record, 'graph'):
